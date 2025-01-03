@@ -2,7 +2,6 @@
 
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Folder, Menu, Tag } from 'lucide-react'
 import { SortButton } from './sort-button'
@@ -11,34 +10,6 @@ import { ColumnVisibilityToggle } from './column-visibility-toggle'
 import { TableComponent } from './table-component'
 import { PaginationControls } from './pagination-controls'
 import { FileData, FolderData, SortConfig, ColumnMetadata } from '../types/types'
-import { ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
-
-
-interface FileData {
-  name: string
-  content: any
-  path: string
-}
-
-interface FolderData {
-  name: string
-  path: string
-  files: FileData[]
-}
-
-interface SortConfig {
-  key: string
-  direction: 'asc' | 'desc'
-}
-
-interface ColumnMetadata {
-  itemOID: string;
-  name: string;
-  label: string;
-  dataType: string;
-  length?: number;
-  keySequence?: number;
-}
 
 const ROWS_PER_PAGE = 30
 
@@ -58,6 +29,13 @@ export default function JsonViewer() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const resetState = () => {
+    setCurrentPage(1)
+    setSortConfig([])
+    setActiveFilter('')
+    setFilteredRows([])
+  }
+
   useEffect(() => {
     if (subfolders.length > 0 && !selectedFolder) {
       const firstFolder = subfolders[0];
@@ -75,10 +53,7 @@ export default function JsonViewer() {
     } else {
       setSelectedFile('');
     }
-    setCurrentPage(1);
-    setSortConfig([]);
-    setActiveFilter('');
-    setFilteredRows([]);
+    resetState();
   }, [selectedFolder, subfolders]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -243,7 +218,7 @@ export default function JsonViewer() {
       processedFilter = processedFilter.replace(
         /([a-zA-Z_][a-zA-Z0-9_]*)\s*(=|!=|>|<|>=|<=)\s*(["']?)([^"'\s]+)(["']?)/g,
         (match, colName, operator, quote1, value, quote2) => {
-          const columnIndex = columns.findIndex(col => col.name === colName);
+          const columnIndex = columns.findIndex((col: ColumnMetadata) => col.name === colName);
           if (columnIndex === -1) {
             throw new Error(`Unknown column: ${colName}`);
           }
@@ -312,10 +287,7 @@ export default function JsonViewer() {
 
   const handleFileChange = (fileName: string) => {
     setSelectedFile(fileName)
-    setCurrentPage(1)
-    setSortConfig([])
-    setActiveFilter('')
-    setFilteredRows([])
+    resetState()
   }
 
   const handleSort = (columnName: string) => {
@@ -332,12 +304,6 @@ export default function JsonViewer() {
       }
     });
     setCurrentPage(1);
-  };
-
-  const getSortIcon = (columnName: string) => {
-    const sort = sortConfig.find(s => s.key === columnName);
-    if (!sort) return <ArrowUpDown className="h-4 w-4 ml-2" />;
-    return sort.direction === 'asc' ? <ArrowUp className="h-4 w-4 ml-2" /> : <ArrowDown className="h-4 w-4 ml-2" />;
   };
 
   const handleToggleColumn = (columnName: string) => {
@@ -364,9 +330,9 @@ export default function JsonViewer() {
       </div>
 
       {/* Left Sidebar */}
-      <div className={`w-full md:w-64 border-r bg-background ${sidebarOpen ? 'block' : 'hidden'} md:block overflow-hidden flex flex-col`}>
+      <div className={`w-full md:w-64 border-r bg-background ${sidebarOpen ? 'block' : 'hidden'} md:block overflow-y-auto`}>
         <div className="p-4 font-semibold text-lg border-b">Folders</div>
-        <ScrollArea className="flex-grow">
+        <div className="py-2">
           {subfolders.map(folder => (
             <div
               key={folder.path}
@@ -384,7 +350,7 @@ export default function JsonViewer() {
               </div>
             </div>
           ))}
-        </ScrollArea>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -438,30 +404,18 @@ export default function JsonViewer() {
                     </div>
                     <FilterInput onFilter={applyFilter} />
                   </div>
-                  <div className="flex-1 border rounded-lg overflow-hidden flex flex-col">
-                    <div className="flex-1 overflow-hidden flex flex-col">
-                      <div className="flex-1 overflow-y-auto">
-                        <div className="inline-block min-w-full align-middle">
-                          <div className="overflow-hidden">
-                            <TableComponent
-                              columns={columns}
-                              rows={currentRows}
-                              columnOrder={columnOrder}
-                              visibleColumns={visibleColumns}
-                              sortConfig={sortConfig}
-                              showColumnNames={showColumnNames}
-                              handleSort={handleSort}
-                              onColumnOrderChange={setColumnOrder}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <div className="h-4 min-w-full"></div>
-                      </div>
-                    </div>
+                  <div className="flex-1 border rounded-lg overflow-hidden">
+                    <TableComponent
+                      columns={columns}
+                      rows={currentRows}
+                      columnOrder={columnOrder}
+                      visibleColumns={visibleColumns}
+                      sortConfig={sortConfig}
+                      showColumnNames={showColumnNames}
+                      handleSort={handleSort}
+                      onColumnOrderChange={setColumnOrder}
+                    />
                   </div>
-                  {/* Pagination Controls */}
                   {totalPages > 1 && (
                     <PaginationControls
                       currentPage={currentPage}
@@ -510,6 +464,7 @@ export default function JsonViewer() {
         ref={fileInputRef}
         onChange={handleFileSelect}
         style={{ display: 'none' }}
+        // @ts-ignore
         webkitdirectory=""
       />
     </div>
