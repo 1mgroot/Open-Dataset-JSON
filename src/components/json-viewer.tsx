@@ -297,12 +297,12 @@ export default function JsonViewer() {
       const existingSort = prevSort.find(s => s.key === columnName)
       if (existingSort) {
         if (existingSort.direction === 'asc') {
-          return prevSort.map(s => s.key === columnName ? { ...s, direction: 'desc' } : s)
+          return prevSort.map(s => s.key === columnName ? { ...s, direction: 'desc' as const } : s)
         } else {
           return prevSort.filter(s => s.key !== columnName)
         }
       } else {
-        return [...prevSort, { key: columnName, direction: 'asc' }]
+        return [...prevSort, { key: columnName, direction: 'asc' as const }]
       }
     })
   }
