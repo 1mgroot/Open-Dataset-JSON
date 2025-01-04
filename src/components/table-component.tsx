@@ -10,6 +10,8 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  DragEndEvent,
+  DragStartEvent,
 } from '@dnd-kit/core'
 import {
   arrayMove,
@@ -18,10 +20,14 @@ import {
   useSortable,
   horizontalListSortingStrategy,
 } from '@dnd-kit/sortable'
+import {
+  restrictToHorizontalAxis,
+  restrictToParentElement,
+} from '@dnd-kit/modifiers'
 
 interface TableComponentProps {
   columns: { name: string; label: string }[]
-  rows: any[][]
+  rows: unknown[][]
   columnOrder: string[]
   visibleColumns: string[]
   sortConfig: SortConfig[]
@@ -50,7 +56,10 @@ function DraggableHeader({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: column.name })
+  } = useSortable({ 
+    id: column.name,
+    data: column
+  })
 
   const style = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -66,13 +75,14 @@ function DraggableHeader({
       style={style}
       className={cn(
         "border-b bg-background px-4 py-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
-        !isVisible && "hidden"
+        !isVisible && "hidden",
+        isDragging && "z-50"
       )}
       {...attributes}
     >
       <div className="flex items-center gap-2">
         {/* Drag Handle */}
-        <div {...listeners} className="cursor-grab active:cursor-grabbing">
+        <div {...listeners} className="cursor-grab active:cursor-grabbing touch-none">
           <GripVertical className="h-4 w-4 text-muted-foreground" />
         </div>
         {/* Sort Button */}
@@ -105,19 +115,85 @@ export function TableComponent({
   handleSort,
   onColumnOrderChange,
 }: TableComponentProps) {
+  const [isDragging, setIsDragging] = React.useState(false)
+  const [lastDragOperation, setLastDragOperation] = React.useState<{
+    activeId: string | null,
+    overId: string | null,
+    oldIndex: number,
+    newIndex: number,
+    success: boolean
+  } | null>(null)
+
+  // Debug current state
+  React.useEffect(() => {
+    console.log('Current column order:', columnOrder)
+    console.log('Current visible columns:', visibleColumns)
+    if (lastDragOperation) {
+      console.log('Last drag operation:', lastDragOperation)
+    }
+  }, [columnOrder, visibleColumns, lastDragOperation])
+
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   )
 
-  const handleDragEnd = (event: any) => {
+  const handleDragStart = (event: DragStartEvent) => {
+    const { active } = event
+    console.log('Drag start:', {
+      activeId: active.id,
+      activeData: active.data.current
+    })
+    setIsDragging(true)
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setIsDragging(false)
     const { active, over } = event
 
+    console.log('Drag end:', {
+      activeId: active.id,
+      overId: over?.id,
+      activeData: active.data.current,
+      overData: over?.data.current
+    })
+
     if (over && active.id !== over.id) {
-      const oldIndex = columnOrder.indexOf(active.id)
-      const newIndex = columnOrder.indexOf(over.id)
+      const oldIndex = columnOrder.findIndex(col => col === active.id)
+      const newIndex = columnOrder.findIndex(col => col === over.id)
+
+      console.log('Reordering:', {
+        oldIndex,
+        newIndex,
+        currentOrder: columnOrder,
+        willBe: arrayMove(columnOrder, oldIndex, newIndex)
+      })
+
+      if (oldIndex === -1 || newIndex === -1) {
+        console.error('Invalid indices detected:', { oldIndex, newIndex, columnOrder })
+        setLastDragOperation({
+          activeId: String(active.id),
+          overId: over ? String(over.id) : null,
+          oldIndex,
+          newIndex,
+          success: false
+        })
+        return
+      }
+
+      setLastDragOperation({
+        activeId: String(active.id),
+        overId: String(over.id),
+        oldIndex,
+        newIndex,
+        success: true
+      })
 
       onColumnOrderChange(arrayMove(columnOrder, oldIndex, newIndex))
     }
@@ -127,54 +203,62 @@ export function TableComponent({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      modifiers={[restrictToHorizontalAxis, restrictToParentElement]}
     >
-      <table className="w-full caption-bottom text-sm">
-        <thead>
-          <tr>
-            <SortableContext
-              items={columnOrder}
-              strategy={horizontalListSortingStrategy}
-            >
-              {columnOrder.map((columnName) => {
-                const column = columns.find(c => c.name === columnName)
-                if (!column) return null
-                return (
-                  <DraggableHeader
-                    key={column.name}
-                    column={column}
-                    showColumnNames={showColumnNames}
-                    sortConfig={sortConfig}
-                    handleSort={handleSort}
-                    isVisible={visibleColumns.includes(column.name)}
-                  />
-                )
-              })}
-            </SortableContext>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr key={rowIndex}>
-              {columnOrder.map((columnName) => {
-                const columnIndex = columns.findIndex(c => c.name === columnName)
-                if (columnIndex === -1) return null
-                return (
-                  <td
-                    key={columnName}
-                    className={cn(
-                      "border-b p-4 align-middle [&:has([role=checkbox])]:pr-0",
-                      !visibleColumns.includes(columnName) && "hidden"
-                    )}
-                  >
-                    {row[columnIndex]}
-                  </td>
-                )
-              })}
+      <div className={cn("relative", isDragging && "cursor-grabbing")}>
+        <table className="w-full caption-bottom text-sm">
+          <thead>
+            <tr>
+              <SortableContext
+                items={columnOrder}
+                strategy={horizontalListSortingStrategy}
+              >
+                {columnOrder.map((columnName) => {
+                  const column = columns.find(c => c.name === columnName)
+                  if (!column) return null
+                  return (
+                    <DraggableHeader
+                      key={column.name}
+                      column={column}
+                      showColumnNames={showColumnNames}
+                      sortConfig={sortConfig}
+                      handleSort={handleSort}
+                      isVisible={visibleColumns.includes(column.name)}
+                    />
+                  )
+                })}
+              </SortableContext>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {visibleColumns.map((colName, colIndex) => {
+                  const column = columns.find(col => col.name === colName)
+                  if (!column) return null
+                  
+                  // Find the original index of this column in the data
+                  const originalColumnIndex = columns.findIndex(col => col.name === colName)
+                  
+                  return (
+                    <td
+                      key={colName}
+                      className={cn(
+                        "p-2 border-r last:border-r-0",
+                        colIndex === 0 && "sticky left-0 bg-background"
+                      )}
+                    >
+                      {String(row[originalColumnIndex] ?? '')}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </DndContext>
   )
 }

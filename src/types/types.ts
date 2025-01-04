@@ -1,6 +1,6 @@
 export interface FileData {
   name: string
-  content: any
+  content: Record<string, unknown>
   path: string
 }
 

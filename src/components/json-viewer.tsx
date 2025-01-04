@@ -9,12 +9,11 @@ import { FilterInput } from './filter-input'
 import { ColumnVisibilityToggle } from './column-visibility-toggle'
 import { TableComponent } from './table-component'
 import { PaginationControls } from './pagination-controls'
-import { FileData, FolderData, SortConfig, ColumnMetadata } from '../types/types'
+import { FolderData, SortConfig, ColumnMetadata } from '../types/types'
 
 const ROWS_PER_PAGE = 30
 
 export default function JsonViewer() {
-  const [rootFolder, setRootFolder] = useState<string>('')
   const [subfolders, setSubfolders] = useState<FolderData[]>([])
   const [selectedFolder, setSelectedFolder] = useState<string>('')
   const [selectedFile, setSelectedFile] = useState<string>('')
@@ -22,7 +21,7 @@ export default function JsonViewer() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sortConfig, setSortConfig] = useState<SortConfig[]>([])
   const [showColumnNames, setShowColumnNames] = useState(false)
-  const [filteredRows, setFilteredRows] = useState<any[]>([])
+  const [filteredRows, setFilteredRows] = useState<unknown[][]>([])
   const [activeFilter, setActiveFilter] = useState<string>('')
   const [columnOrder, setColumnOrder] = useState<string[]>([])
   const [visibleColumns, setVisibleColumns] = useState<string[]>([])
@@ -61,7 +60,6 @@ export default function JsonViewer() {
     if (!files) return
 
     const rootPath = files[0].webkitRelativePath.split('/')[0]
-    setRootFolder(rootPath)
 
     const folderMap = new Map<string, FolderData>()
 
@@ -116,81 +114,78 @@ export default function JsonViewer() {
       if (item.kind === 'file') {
         const entry = item.webkitGetAsEntry()
         if (entry?.isDirectory) {
-          processDirectoryEntry(entry)
+          processDirectoryEntry(entry as FileSystemDirectoryEntry)
         }
       }
     })
   }, [])
 
-  const processDirectoryEntry = async (dirEntry: any) => {
-    const rootPath = dirEntry.name
-    setRootFolder(rootPath)
-    
-    const processEntry = async (entry: any): Promise<FolderData | null> => {
+  const processDirectoryEntry = async (dirEntry: FileSystemDirectoryEntry) => {
+    const processEntry = async (entry: FileSystemEntry): Promise<FolderData | null> => {
       if (entry.isDirectory) {
-        const reader = entry.createReader()
-        const entries = await new Promise<any[]>((resolve) => {
-          reader.readEntries((entries: any[]) => resolve(entries))
+        const directoryEntry = entry as FileSystemDirectoryEntry
+        const reader = directoryEntry.createReader()
+        const entries = await new Promise<FileSystemEntry[]>((resolve) => {
+          reader.readEntries((entries) => resolve(entries))
         })
 
-        const files: FileData[] = []
-        for (const childEntry of entries) {
-          if (childEntry.isFile && childEntry.name.endsWith('.json')) {
-            const file = await new Promise<File>((resolve) => {
-              childEntry.file(resolve)
-            })
-            try {
-              const content = await file.text()
-              files.push({
-                name: childEntry.name,
-                content: JSON.parse(content),
-                path: childEntry.fullPath
-              })
-            } catch (error) {
-              console.error(`Error processing file ${childEntry.name}:`, error)
-            }
-          }
+        const results = await Promise.all(entries.map(processEntry))
+        const validResults = results.filter((result): result is FolderData => result !== null)
+        return {
+          name: entry.name,
+          path: entry.fullPath,
+          files: validResults.flatMap(result => result.files)
         }
+      }
 
-        if (entry.name === rootPath) {
-          const subfolderEntries = entries.filter(e => e.isDirectory)
-          const processedSubfolders: FolderData[] = []
-          
-          for (const subfolder of subfolderEntries) {
-            const subfolderData = await processEntry(subfolder)
-            if (subfolderData) {
-              processedSubfolders.push(subfolderData)
-            }
-          }
-          
-          setSubfolders(processedSubfolders)
-          if (processedSubfolders.length > 0) {
-            setSelectedFolder(processedSubfolders[0].path);
-            if (processedSubfolders[0].files.length > 0) {
-              setSelectedFile(processedSubfolders[0].files[0].name);
-            }
-          }
-        } else {
+      if (entry.isFile) {
+        const fileEntry = entry as FileSystemFileEntry
+        const file = await new Promise<File>((resolve) => {
+          fileEntry.file(resolve)
+        })
+
+        if (!file.name.endsWith('.json')) return null
+
+        try {
+          const content = await file.text()
           return {
             name: entry.name,
             path: entry.fullPath,
-            files
+            files: [{
+              name: file.name,
+              content: JSON.parse(content) as Record<string, unknown>,
+              path: entry.fullPath
+            }]
           }
+        } catch (error) {
+          console.error(`Error processing file ${file.name}:`, error)
+          return null
         }
       }
+
       return null
     }
 
-    await processEntry(dirEntry)
-    setCurrentPage(1)
-    setSidebarOpen(false)
+    const result = await processEntry(dirEntry)
+    if (result) {
+      setSubfolders([result])
+      setSelectedFolder(result.path)
+      if (result.files.length > 0) {
+        setSelectedFile(result.files[0].name)
+      }
+    }
   }
 
   const selectedFolderData = subfolders.find(f => f.path === selectedFolder)
   const selectedFileData = selectedFolderData?.files.find(f => f.name === selectedFile)
 
-  const columns = selectedFileData?.content.columns || []
-  const rows = selectedFileData?.content.rows || []
+  const columns = useMemo(() => {
+    return (selectedFileData?.content as { columns?: ColumnMetadata[] })?.columns || []
+  }, [selectedFileData])
+
+  const rows = useMemo(() => {
+    return (selectedFileData?.content as { rows?: unknown[][] })?.rows || []
+  }, [selectedFileData])
 
   useEffect(() => {
     if (columns.length > 0) {
@@ -235,10 +230,10 @@ export default function JsonViewer() {
 
       const filterFunction = new Function('row', `return ${processedFilter}`);
       
-      const filtered = rows.filter((row: any) => {
+      const filtered = rows.filter((row: unknown[]) => {
         try {
           return filterFunction(row);
-        } catch (e) {
+        } catch {
           return false;
         }
       });
@@ -268,13 +263,15 @@ export default function JsonViewer() {
   const sortedRows = useMemo(() => {
     if (sortConfig.length === 0) return filteredRows;
 
-    return [...filteredRows].sort((a, b) => {
+    return [...filteredRows].sort((a: unknown[], b: unknown[]) => {
       for (const sort of sortConfig) {
         const index = columnOrder.indexOf(sort.key);
         if (index === -1) continue;
 
-        if (a[index] < b[index]) return sort.direction === 'asc' ? -1 : 1;
-        if (a[index] > b[index]) return sort.direction === 'asc' ? 1 : -1;
+        const aVal = String(a[index] ?? '')
+        const bVal = String(b[index] ?? '')
+        if (aVal < bVal) return sort.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sort.direction === 'asc' ? 1 : -1;
       }
       return 0;
     });
@@ -291,20 +288,22 @@ export default function JsonViewer() {
   }
 
   const handleSort = (columnName: string) => {
+    const columnIndex = columns.findIndex((col: ColumnMetadata) => col.name === columnName)
+    if (columnIndex === -1) return
+
     setSortConfig(prevSort => {
-      const existingSort = prevSort.find(s => s.key === columnName);
+      const existingSort = prevSort.find(s => s.key === columnName)
       if (existingSort) {
         if (existingSort.direction === 'asc') {
-          return prevSort.map(s => s.key === columnName ? { ...s, direction: 'desc' } : s);
+          return prevSort.map(s => s.key === columnName ? { ...s, direction: 'desc' } : s)
         } else {
-          return prevSort.filter(s => s.key !== columnName);
+          return prevSort.filter(s => s.key !== columnName)
         }
       } else {
-        return [...prevSort, { key: columnName, direction: 'asc' }];
+        return [...prevSort, { key: columnName, direction: 'asc' }]
       }
-    });
-    setCurrentPage(1);
-  };
+    })
+  }
 
   const handleToggleColumn = (columnName: string) => {
     setVisibleColumns(prev => 
@@ -313,6 +312,13 @@ export default function JsonViewer() {
         : [...prev, columnName]
     );
   };
+
+  const handleColumnOrderChange = (newOrder: string[]) => {
+    setColumnOrder(newOrder)
+    // Update visible columns to match the new order while preserving visibility
+    const newVisibleColumns = newOrder.filter(col => visibleColumns.includes(col))
+    setVisibleColumns(newVisibleColumns)
+  }
 
   return (
     <div 
@@ -404,7 +410,7 @@ export default function JsonViewer() {
                     </div>
                     <FilterInput onFilter={applyFilter} />
                   </div>
-                  <div className="flex-1 border rounded-lg overflow-hidden">
+                  <div className="flex-1 border rounded-lg overflow-auto">
                     <TableComponent
                       columns={columns}
                       rows={currentRows}
@@ -413,7 +419,7 @@ export default function JsonViewer() {
                       sortConfig={sortConfig}
                       showColumnNames={showColumnNames}
                       handleSort={handleSort}
-                      onColumnOrderChange={setColumnOrder}
+                      onColumnOrderChange={handleColumnOrderChange}
                     />
                   </div>
                   {totalPages > 1 && (
@@ -464,7 +470,7 @@ export default function JsonViewer() {
         ref={fileInputRef}
         onChange={handleFileSelect}
         style={{ display: 'none' }}
-        // @ts-ignore
+        // @ts-expect-error - DragEvent types are not fully compatible
         webkitdirectory=""
       />
     </div>
