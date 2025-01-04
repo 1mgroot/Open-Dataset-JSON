@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { GeistSans } from 'geist/font/sans'
 import { clsx } from 'clsx'
-import { SpeedInsights } from "@vercel/speed-insights/next"
+import { Providers } from "@/components/providers"
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,7 +18,7 @@ export default function RootLayout({
     <html lang="en" className={clsx(GeistSans.className, 'antialiased')}>
       <body>
         {children}
-        <SpeedInsights />
+        <Providers />
       </body>
     </html>
   );
