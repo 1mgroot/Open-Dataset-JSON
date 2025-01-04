@@ -96,9 +96,11 @@ export default function JsonViewer() {
     
     if (folderMap.size > 0) {
       const firstFolder = folderMap.values().next().value;
-      setSelectedFolder(firstFolder.path);
-      if (firstFolder.files.length > 0) {
-        setSelectedFile(firstFolder.files[0].name);
+      if (firstFolder) {
+        setSelectedFolder(firstFolder.path);
+        if (firstFolder.files.length > 0) {
+          setSelectedFile(firstFolder.files[0].name);
+        }
       }
     }
 
