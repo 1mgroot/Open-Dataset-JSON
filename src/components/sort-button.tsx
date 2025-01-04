@@ -153,7 +153,7 @@ export function SortButton({ sortConfig, columns, onSortChange, showColumnNames 
                     onToggleDirection={() => {
                       const newSortConfig = sortConfig.map(s => 
                         s.key === sort.key 
-                          ? { ...s, direction: s.direction === 'asc' ? 'desc' : 'asc' }
+                          ? { ...s, direction: s.direction === 'asc' ? ('desc' as const) : ('asc' as const) }
                           : s
                       )
                       onSortChange(newSortConfig)
@@ -175,7 +175,7 @@ export function SortButton({ sortConfig, columns, onSortChange, showColumnNames 
             <DropdownMenuItem
               key={col.name}
               onSelect={() => {
-                onSortChange([...sortConfig, { key: col.name, direction: 'asc' }])
+                onSortChange([...sortConfig, { key: col.name, direction: 'asc' as const }])
               }}
             >
               {showColumnNames ? col.name : col.label}
