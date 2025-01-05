@@ -492,7 +492,7 @@ export default function JsonViewer() {
               className="flex-1 flex flex-col overflow-hidden"
             >
               <div className="border-b overflow-x-auto">
-                <TabsList className="w-max min-w-full flex">
+                <TabsList className="w-max min-w-full flex justify-start">
                   {selectedFolderData.files.map(file => (
                     <TabsTrigger key={file.path} value={file.name} className="data-[state=active]:bg-background flex-shrink-0">
                       {file.name}
