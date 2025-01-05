@@ -18,7 +18,7 @@ import { FilterInput } from './filter-input'
 import { ColumnVisibilityToggle } from './column-visibility-toggle'
 import { TableComponent } from './table-component'
 import { PaginationControls } from './pagination-controls'
-import { FolderData, SortConfig, ColumnMetadata } from '../types/types'
+import { FolderData, FileData, SortConfig, ColumnMetadata } from '../types/types'
 
 const ROWS_PER_PAGE = 30
 
@@ -74,20 +74,21 @@ export default function JsonViewer() {
 
     for (const file of Array.from(files)) {
       const pathParts = file.webkitRelativePath.split('/')
-      if (pathParts.length < 3) continue
-
-      const subfolder = pathParts[1]
       const fileExt = format === 'json' ? '.json' : '.ndjson'
       if (!file.name.endsWith(fileExt)) continue
 
-      let folderData = folderMap.get(subfolder)
+      // Handle both root-level files and files in subfolders
+      const folderName = pathParts.length > 2 ? pathParts[1] : rootPath
+      const folderPath = pathParts.length > 2 ? `${rootPath}/${folderName}` : rootPath
+
+      let folderData = folderMap.get(folderName)
       if (!folderData) {
         folderData = {
-          name: subfolder,
-          path: `${rootPath}/${subfolder}`,
+          name: folderName,
+          path: folderPath,
           files: []
         }
-        folderMap.set(subfolder, folderData)
+        folderMap.set(folderName, folderData)
       }
 
       try {
@@ -169,6 +170,61 @@ export default function JsonViewer() {
 
         const results = await Promise.all(entries.map(processEntry))
         const validResults = results.filter((result): result is FolderData => result !== null)
+
+        // If no valid subfolders but has files directly, return as a single folder
+        if (validResults.length === 0) {
+          const files = await Promise.all(
+            entries
+              .filter((e): e is FileSystemFileEntry => e.isFile)
+              .map(async (fileEntry) => {
+                const file = await new Promise<File>((resolve) => {
+                  fileEntry.file(resolve)
+                })
+
+                const fileExt = format === 'json' ? '.json' : '.ndjson'
+                if (!file.name.endsWith(fileExt)) return null
+
+                try {
+                  const content = await file.text()
+                  let parsedContent: Record<string, unknown>
+
+                  if (format === 'ndjson') {
+                    const lines = content.split(/\r?\n/).filter(line => line.trim())
+                    if (lines.length === 0) return null
+
+                    const metadata = JSON.parse(lines[0])
+                    const rows = lines.slice(1).map(line => JSON.parse(line))
+                    
+                    parsedContent = {
+                      ...metadata,
+                      rows: rows
+                    }
+                  } else {
+                    parsedContent = JSON.parse(content)
+                  }
+
+                  return {
+                    name: file.name,
+                    content: parsedContent,
+                    path: fileEntry.fullPath
+                  }
+                } catch {
+                  return null
+                }
+              })
+          )
+
+          const validFiles = files.filter((file): file is FileData => file !== null)
+          if (validFiles.length > 0) {
+            return {
+              name: entry.name,
+              path: entry.fullPath,
+              files: validFiles
+            }
+          }
+          return null
+        }
+
         return {
           name: entry.name,
           path: entry.fullPath,
