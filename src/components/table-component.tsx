@@ -2,7 +2,8 @@ import * as React from "react"
 import { ArrowUpDown, ArrowUp, ArrowDown, GripVertical } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { SortConfig } from "../types/types"
+import { SortConfig, ColumnMetadata } from "../types/types"
+import { MetadataTooltip } from "./metadata-tooltip"
 import {
   DndContext,
   closestCenter,
@@ -25,7 +26,7 @@ import {
 } from '@dnd-kit/modifiers'
 
 interface TableComponentProps {
-  columns: { name: string; label: string }[]
+  columns: ColumnMetadata[]
   rows: unknown[][]
   columnOrder: string[]
   visibleColumns: string[]
@@ -42,7 +43,7 @@ function DraggableHeader({
   handleSort,
   isVisible,
 }: { 
-  column: { name: string; label: string }
+  column: ColumnMetadata
   showColumnNames: boolean
   sortConfig: SortConfig[]
   handleSort: (columnName: string) => void
@@ -85,20 +86,22 @@ function DraggableHeader({
           <GripVertical className="h-4 w-4 text-muted-foreground" />
         </div>
         {/* Sort Button */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-3 h-8 data-[state=open]:bg-accent"
-          onClick={(e) => {
-            e.stopPropagation()
-            handleSort(column.name)
-          }}
-        >
-          <span>{showColumnNames ? column.name : column.label}</span>
-          {!sort && <ArrowUpDown className="ml-2 h-4 w-4" />}
-          {sort?.direction === 'asc' && <ArrowUp className="ml-2 h-4 w-4" />}
-          {sort?.direction === 'desc' && <ArrowDown className="ml-2 h-4 w-4" />}
-        </Button>
+        <MetadataTooltip metadata={column}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-3 h-8 data-[state=open]:bg-accent"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleSort(column.name)
+            }}
+          >
+            <span>{showColumnNames ? column.name : column.label}</span>
+            {!sort && <ArrowUpDown className="ml-2 h-4 w-4" />}
+            {sort?.direction === 'asc' && <ArrowUp className="ml-2 h-4 w-4" />}
+            {sort?.direction === 'desc' && <ArrowDown className="ml-2 h-4 w-4" />}
+          </Button>
+        </MetadataTooltip>
       </div>
     </th>
   )
