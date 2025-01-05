@@ -123,7 +123,7 @@ export function SortButton({ sortConfig, columns, onSortChange, showColumnNames 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm">
+        <Button variant="outline" size="sm" className="h-9">
           <ArrowUpDown className="mr-2 h-4 w-4" />
           Sort
         </Button>
@@ -174,7 +174,8 @@ export function SortButton({ sortConfig, columns, onSortChange, showColumnNames 
           .map(col => (
             <DropdownMenuItem
               key={col.name}
-              onSelect={() => {
+              onSelect={(e) => {
+                e.preventDefault()
                 onSortChange([...sortConfig, { key: col.name, direction: 'asc' as const }])
               }}
             >

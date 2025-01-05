@@ -4,14 +4,56 @@ import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Folder, Menu, Tag } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Label } from "@/components/ui/label"
 import { SortButton } from './sort-button'
 import { FilterInput } from './filter-input'
 import { ColumnVisibilityToggle } from './column-visibility-toggle'
 import { TableComponent } from './table-component'
 import { PaginationControls } from './pagination-controls'
-import { FolderData, SortConfig, ColumnMetadata } from '../types/types'
+import { FolderData, FileData, SortConfig, ColumnMetadata, DefineXmlMetadata, DefineXmlFileMetadata } from '../types/types'
+import { FileTooltip } from './file-tooltip'
+import { FolderTooltip } from './folder-tooltip'
 
 const ROWS_PER_PAGE = 30
+
+async function parseDefineXml(xmlText: string) {
+  const parser = new DOMParser()
+  const xmlDoc = parser.parseFromString(xmlText, 'text/xml')
+  const itemRefs = xmlDoc.getElementsByTagName('ItemRef')
+  const metadata = new Map<string, DefineXmlMetadata>()
+
+  // Parse file-level metadata
+  const odm = xmlDoc.getElementsByTagName('ODM')[0]
+  const fileMetadata: DefineXmlFileMetadata = {
+    creationDateTime: odm?.getAttribute('CreationDateTime') || undefined,
+    name: odm?.getElementsByTagName('ItemGroupDef')[0]?.getAttribute('Name') || undefined,
+    label: odm?.getElementsByTagName('ItemGroupDef')[0]?.getElementsByTagName('Description')[0]?.textContent || undefined,
+    hasNoData: odm?.getElementsByTagName('ItemGroupDef')[0]?.getAttribute('def:HasNoData') === 'Yes'
+  }
+
+  for (const itemRef of Array.from(itemRefs)) {
+    const itemOID = itemRef.getAttribute('ItemOID')
+    if (!itemOID) continue
+
+    metadata.set(itemOID, {
+      itemOID,
+      orderNumber: itemRef.getAttribute('OrderNumber') || undefined,
+      mandatory: itemRef.getAttribute('Mandatory') || undefined,
+      methodOID: itemRef.getAttribute('MethodOID') || undefined,
+      whereClauseOID: itemRef.getElementsByTagName('def:WhereClauseRef')[0]?.getAttribute('WhereClauseOID') || undefined
+    })
+  }
+
+  return { metadata, fileMetadata }
+}
 
 export default function JsonViewer() {
   const [subfolders, setSubfolders] = useState<FolderData[]>([])
@@ -25,6 +67,10 @@ export default function JsonViewer() {
   const [activeFilter, setActiveFilter] = useState<string>('')
   const [columnOrder, setColumnOrder] = useState<string[]>([])
   const [visibleColumns, setVisibleColumns] = useState<string[]>([])
+  const [showFormatDialog, setShowFormatDialog] = useState(false)
+  const [selectedFormat, setSelectedFormat] = useState<'json' | 'ndjson'>('json')
+  const [pendingFiles, setPendingFiles] = useState<FileList | null>(null)
+  const [pendingDirEntry, setPendingDirEntry] = useState<FileSystemDirectoryEntry | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -55,36 +101,82 @@ export default function JsonViewer() {
     resetState();
   }, [selectedFolder, subfolders]);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
-
+  const processFiles = async (files: FileList, format: 'json' | 'ndjson') => {
     const rootPath = files[0].webkitRelativePath.split('/')[0]
-
     const folderMap = new Map<string, FolderData>()
+    let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
+    let defineXmlFileMetadata: DefineXmlFileMetadata | null = null
+
+    // First, look for define.xml
+    for (const file of Array.from(files)) {
+      if (file.name.toLowerCase() === 'define.xml') {
+        try {
+          const content = await file.text()
+          const { metadata, fileMetadata } = await parseDefineXml(content)
+          defineXmlMetadata = metadata
+          defineXmlFileMetadata = fileMetadata
+          break
+        } catch {
+          console.warn('Failed to parse define.xml')
+        }
+      }
+    }
 
     for (const file of Array.from(files)) {
       const pathParts = file.webkitRelativePath.split('/')
-      if (pathParts.length < 3) continue
+      const fileExt = format === 'json' ? '.json' : '.ndjson'
+      if (!file.name.endsWith(fileExt)) continue
 
-      const subfolder = pathParts[1]
-      if (!file.name.endsWith('.json')) continue
+      // Handle both root-level files and files in subfolders
+      const folderName = pathParts.length > 2 ? pathParts[1] : rootPath
+      const folderPath = pathParts.length > 2 ? `${rootPath}/${folderName}` : rootPath
 
-      let folderData = folderMap.get(subfolder)
+      let folderData = folderMap.get(folderName)
       if (!folderData) {
         folderData = {
-          name: subfolder,
-          path: `${rootPath}/${subfolder}`,
+          name: folderName,
+          path: folderPath,
           files: []
         }
-        folderMap.set(subfolder, folderData)
+        folderMap.set(folderName, folderData)
       }
 
       try {
         const content = await file.text()
+        let parsedContent: Record<string, unknown>
+
+        if (format === 'ndjson') {
+          const lines = content.split(/\r?\n/).filter(line => line.trim())
+          if (lines.length === 0) continue
+
+          const metadata = JSON.parse(lines[0])
+          const rows = lines.slice(1).map(line => JSON.parse(line))
+          
+          parsedContent = {
+            ...metadata,
+            rows: rows
+          }
+        } else {
+          parsedContent = JSON.parse(content)
+        }
+
+        // Add define.xml metadata if available
+        if (defineXmlMetadata && parsedContent.columns) {
+          const columns = parsedContent.columns as ColumnMetadata[]
+          columns.forEach(col => {
+            const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+            if (defineMetadata) {
+              col.defineXmlMetadata = defineMetadata
+            }
+          })
+        }
+
         folderData.files.push({
           name: file.name,
-          content: JSON.parse(content),
+          content: {
+            ...parsedContent,
+            ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+          },
           path: file.webkitRelativePath
         })
       } catch {
@@ -108,6 +200,14 @@ export default function JsonViewer() {
     setSidebarOpen(false)
   }
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+
+    setPendingFiles(files)
+    setShowFormatDialog(true)
+  }
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     const items = Array.from(e.dataTransfer.items)
@@ -116,13 +216,17 @@ export default function JsonViewer() {
       if (item.kind === 'file') {
         const entry = item.webkitGetAsEntry()
         if (entry?.isDirectory) {
-          processDirectoryEntry(entry as FileSystemDirectoryEntry)
+          setPendingDirEntry(entry as FileSystemDirectoryEntry)
+          setShowFormatDialog(true)
         }
       }
     })
   }, [])
 
-  const processDirectoryEntry = async (dirEntry: FileSystemDirectoryEntry) => {
+  const processDirectoryEntry = async (dirEntry: FileSystemDirectoryEntry, format: 'json' | 'ndjson') => {
+    let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
+    let defineXmlFileMetadata: DefineXmlFileMetadata | null = null
+
     const processEntry = async (entry: FileSystemEntry): Promise<FolderData | null> => {
       if (entry.isDirectory) {
         const directoryEntry = entry as FileSystemDirectoryEntry
@@ -131,8 +235,96 @@ export default function JsonViewer() {
           reader.readEntries((entries) => resolve(entries))
         })
 
+        // First, look for define.xml
+        for (const subEntry of entries) {
+          if (subEntry.isFile && subEntry.name.toLowerCase() === 'define.xml') {
+            const fileEntry = subEntry as FileSystemFileEntry
+            try {
+              const file = await new Promise<File>((resolve) => {
+                fileEntry.file(resolve)
+              })
+              const content = await file.text()
+              const { metadata, fileMetadata } = await parseDefineXml(content)
+              defineXmlMetadata = metadata
+              defineXmlFileMetadata = fileMetadata
+              break
+            } catch {
+              console.warn('Failed to parse define.xml')
+            }
+          }
+        }
+
         const results = await Promise.all(entries.map(processEntry))
         const validResults = results.filter((result): result is FolderData => result !== null)
+
+        // If no valid subfolders but has files directly, return as a single folder
+        if (validResults.length === 0) {
+          const files = await Promise.all(
+            entries
+              .filter((e): e is FileSystemFileEntry => e.isFile)
+              .map(async (fileEntry) => {
+                const file = await new Promise<File>((resolve) => {
+                  fileEntry.file(resolve)
+                })
+
+                const fileExt = format === 'json' ? '.json' : '.ndjson'
+                if (!file.name.endsWith(fileExt)) return null
+
+                try {
+                  const content = await file.text()
+                  let parsedContent: Record<string, unknown>
+
+                  if (format === 'ndjson') {
+                    const lines = content.split(/\r?\n/).filter(line => line.trim())
+                    if (lines.length === 0) return null
+
+                    const metadata = JSON.parse(lines[0])
+                    const rows = lines.slice(1).map(line => JSON.parse(line))
+                    
+                    parsedContent = {
+                      ...metadata,
+                      rows: rows
+                    }
+                  } else {
+                    parsedContent = JSON.parse(content)
+                  }
+
+                  // Add define.xml metadata if available
+                  if (defineXmlMetadata && parsedContent.columns) {
+                    const columns = parsedContent.columns as ColumnMetadata[]
+                    columns.forEach(col => {
+                      const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+                      if (defineMetadata) {
+                        col.defineXmlMetadata = defineMetadata
+                      }
+                    })
+                  }
+
+                  return {
+                    name: file.name,
+                    content: {
+                      ...parsedContent,
+                      ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                    },
+                    path: fileEntry.fullPath
+                  }
+                } catch {
+                  return null
+                }
+              })
+          )
+
+          const validFiles = files.filter((file): file is FileData => file !== null)
+          if (validFiles.length > 0) {
+            return {
+              name: entry.name,
+              path: entry.fullPath,
+              files: validFiles
+            }
+          }
+          return null
+        }
+
         return {
           name: entry.name,
           path: entry.fullPath,
@@ -146,16 +338,48 @@ export default function JsonViewer() {
           fileEntry.file(resolve)
         })
 
-        if (!file.name.endsWith('.json')) return null
+        const fileExt = format === 'json' ? '.json' : '.ndjson'
+        if (!file.name.endsWith(fileExt)) return null
 
         try {
           const content = await file.text()
+          let parsedContent: Record<string, unknown>
+
+          if (format === 'ndjson') {
+            const lines = content.split(/\r?\n/).filter(line => line.trim())
+            if (lines.length === 0) return null
+
+            const metadata = JSON.parse(lines[0])
+            const rows = lines.slice(1).map(line => JSON.parse(line))
+            
+            parsedContent = {
+              ...metadata,
+              rows: rows
+            }
+          } else {
+            parsedContent = JSON.parse(content)
+          }
+
+          // Add define.xml metadata if available
+          if (defineXmlMetadata && parsedContent.columns) {
+            const columns = parsedContent.columns as ColumnMetadata[]
+            columns.forEach(col => {
+              const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+              if (defineMetadata) {
+                col.defineXmlMetadata = defineMetadata
+              }
+            })
+          }
+
           return {
             name: entry.name,
             path: entry.fullPath,
             files: [{
               name: file.name,
-              content: JSON.parse(content) as Record<string, unknown>,
+              content: {
+                ...parsedContent,
+                ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+              },
               path: entry.fullPath
             }]
           }
@@ -174,6 +398,19 @@ export default function JsonViewer() {
       if (result.files.length > 0) {
         setSelectedFile(result.files[0].name)
       }
+    }
+  }
+
+  const handleFormatSelect = async (format: 'json' | 'ndjson') => {
+    setSelectedFormat(format)
+    setShowFormatDialog(false)
+
+    if (pendingFiles) {
+      await processFiles(pendingFiles, format)
+      setPendingFiles(null)
+    } else if (pendingDirEntry) {
+      await processDirectoryEntry(pendingDirEntry, format)
+      setPendingDirEntry(null)
     }
   }
 
@@ -321,150 +558,190 @@ export default function JsonViewer() {
   }
 
   return (
-    <div 
-      className="h-screen flex flex-col md:flex-row overflow-hidden"
-      onDragOver={e => e.preventDefault()}
-      onDrop={handleDrop}
-    >
-      {/* Mobile Header */}
-      <div className="md:hidden flex items-center justify-between p-4 border-b">
-        <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
-          <Menu className="h-6 w-6" />
-          <span className="sr-only">Toggle sidebar</span>
-        </Button>
-        <h1 className="text-lg font-semibold">JSON Viewer</h1>
-      </div>
-
-      {/* Left Sidebar */}
-      <div className={`w-full md:w-64 border-r bg-background ${sidebarOpen ? 'block' : 'hidden'} md:block overflow-y-auto`}>
-        <div className="p-4 font-semibold text-lg border-b">Folders</div>
-        <div className="py-2">
-          {subfolders.map(folder => (
-            <div
-              key={folder.path}
-              className={`px-4 py-2 cursor-pointer hover:bg-accent ${
-                selectedFolder === folder.path ? 'bg-accent text-accent-foreground' : ''
-              }`}
-              onClick={() => {
-                setSelectedFolder(folder.path)
-                setSidebarOpen(false)
-              }}
-            >
-              <div className="flex items-center gap-2">
-                <Folder className="h-4 w-4" />
-                <span>{folder.name}</span>
-              </div>
-            </div>
-          ))}
+    <>
+      <div 
+        className="h-screen flex flex-col md:flex-row overflow-hidden"
+        onDragOver={e => e.preventDefault()}
+        onDrop={handleDrop}
+      >
+        {/* Mobile Header */}
+        <div className="md:hidden flex items-center justify-between p-4 border-b">
+          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <Menu className="h-6 w-6" />
+            <span className="sr-only">Toggle sidebar</span>
+          </Button>
+          <h1 className="text-lg font-semibold">JSON Viewer</h1>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {selectedFolderData ? (
-          <Tabs
-            value={selectedFile}
-            onValueChange={handleFileChange}
-            className="flex-1 flex flex-col overflow-hidden"
-          >
-            <div className="border-b overflow-x-auto">
-              <TabsList className="w-max min-w-full flex">
-                {selectedFolderData.files.map(file => (
-                  <TabsTrigger key={file.path} value={file.name} className="data-[state=active]:bg-background flex-shrink-0">
-                    {file.name}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              {selectedFolderData.files.map(file => (
-                <TabsContent
-                  key={file.path}
-                  value={file.name}
-                  className="flex-1 p-4 data-[state=active]:flex flex-col h-full overflow-hidden"
+        {/* Left Sidebar */}
+        <div className={`w-full md:w-64 border-r bg-background ${sidebarOpen ? 'block' : 'hidden'} md:block overflow-y-auto`}>
+          <div className="p-4 font-semibold text-lg border-b">Folders</div>
+          <div className="py-2">
+            {subfolders.map(folder => (
+              <FolderTooltip key={folder.path} folder={folder}>
+                <div
+                  className={`px-4 py-2 cursor-pointer hover:bg-accent ${
+                    selectedFolder === folder.path ? 'bg-accent text-accent-foreground' : ''
+                  }`}
+                  onClick={() => {
+                    setSelectedFolder(folder.path)
+                    setSidebarOpen(false)
+                  }}
                 >
-                  <div className="space-y-4 mb-4">
-                    <div className="flex justify-between items-center">
-                      <div className="flex space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowColumnNames(!showColumnNames)}
-                        >
-                          <Tag className="mr-2 h-4 w-4" />
-                          {showColumnNames ? "Show Labels" : "Show Names"}
-                        </Button>
-                        <ColumnVisibilityToggle
+                  <div className="flex items-center gap-2">
+                    <Folder className="h-4 w-4" />
+                    <span>{folder.name}</span>
+                  </div>
+                </div>
+              </FolderTooltip>
+            ))}
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {selectedFolderData ? (
+            <Tabs
+              value={selectedFile}
+              onValueChange={handleFileChange}
+              className="flex-1 flex flex-col overflow-hidden"
+            >
+              <div className="border-b overflow-x-auto">
+                <TabsList className="w-max min-w-full flex justify-start">
+                  {selectedFolderData.files.map(file => (
+                    <FileTooltip key={file.path} file={file}>
+                      <TabsTrigger value={file.name} className="data-[state=active]:bg-background flex-shrink-0">
+                        {file.name}
+                      </TabsTrigger>
+                    </FileTooltip>
+                  ))}
+                </TabsList>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                {selectedFolderData.files.map(file => (
+                  <TabsContent
+                    key={file.path}
+                    value={file.name}
+                    className="flex-1 p-4 data-[state=active]:flex flex-col h-full overflow-hidden"
+                  >
+                    <div className="space-y-4 mb-4">
+                      <div className="flex justify-between items-center">
+                        <div className="flex space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-9"
+                            onClick={() => setShowColumnNames(!showColumnNames)}
+                          >
+                            <Tag className="mr-2 h-4 w-4" />
+                            {showColumnNames ? "Show Labels" : "Show Names"}
+                          </Button>
+                          <ColumnVisibilityToggle
+                            columns={columns}
+                            visibleColumns={visibleColumns}
+                            onToggleColumn={handleToggleColumn}
+                            showColumnNames={showColumnNames}
+                          />
+                        </div>
+                        <SortButton
+                          sortConfig={sortConfig}
                           columns={columns}
-                          visibleColumns={visibleColumns}
-                          onToggleColumn={handleToggleColumn}
+                          onSortChange={setSortConfig}
                           showColumnNames={showColumnNames}
                         />
                       </div>
-                      <SortButton
-                        sortConfig={sortConfig}
+                      <FilterInput onFilter={applyFilter} />
+                    </div>
+                    <div className="flex-1 border rounded-lg overflow-auto">
+                      <TableComponent
                         columns={columns}
-                        onSortChange={setSortConfig}
+                        rows={currentRows}
+                        columnOrder={columnOrder}
+                        visibleColumns={visibleColumns}
+                        sortConfig={sortConfig}
                         showColumnNames={showColumnNames}
+                        handleSort={handleSort}
+                        onColumnOrderChange={handleColumnOrderChange}
                       />
                     </div>
-                    <FilterInput onFilter={applyFilter} />
-                  </div>
-                  <div className="flex-1 border rounded-lg overflow-auto">
-                    <TableComponent
-                      columns={columns}
-                      rows={currentRows}
-                      columnOrder={columnOrder}
-                      visibleColumns={visibleColumns}
-                      sortConfig={sortConfig}
-                      showColumnNames={showColumnNames}
-                      handleSort={handleSort}
-                      onColumnOrderChange={handleColumnOrderChange}
-                    />
-                  </div>
-                  {totalPages > 1 && (
-                    <PaginationControls
-                      currentPage={currentPage}
-                      totalPages={totalPages}
-                      startIndex={startIndex}
-                      endIndex={endIndex}
-                      totalRows={sortedRows.length}
-                      onPageChange={setCurrentPage}
-                    />
-                  )}
-                </TabsContent>
-              ))}
-            </div>
-          </Tabs>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">
-            <div className="text-center">
-              <div className="mb-4">
-                <svg
-                  className="mx-auto h-12 w-12"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-                  />
-                </svg>
+                    {totalPages > 1 && (
+                      <PaginationControls
+                        currentPage={currentPage}
+                        totalPages={totalPages}
+                        startIndex={startIndex}
+                        endIndex={endIndex}
+                        totalRows={sortedRows.length}
+                        onPageChange={setCurrentPage}
+                      />
+                    )}
+                  </TabsContent>
+                ))}
               </div>
-              <h3 className="text-lg font-semibold">Drag a folder here</h3>
-              <p 
-                className="text-sm cursor-pointer hover:text-primary"
-                onClick={() => fileInputRef.current?.click()}
+            </Tabs>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">
+              <div className="text-center">
+                <div className="mb-4">
+                  <svg
+                    className="mx-auto h-12 w-12"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+                    />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold">Drag a folder here</h3>
+                <p 
+                  className="text-sm cursor-pointer hover:text-primary"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  or click to browse
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <Dialog open={showFormatDialog} onOpenChange={setShowFormatDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Select File Format</DialogTitle>
+            <DialogDescription>
+              Choose the format of your dataset files
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <RadioGroup
+              value={selectedFormat}
+              onValueChange={(value: 'json' | 'ndjson') => setSelectedFormat(value)}
+            >
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="json" id="json" />
+                <Label htmlFor="json">JSON</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="ndjson" id="ndjson" />
+                <Label htmlFor="ndjson">NDJSON (New-line Delimited JSON)</Label>
+              </div>
+            </RadioGroup>
+            <div className="flex justify-end">
+              <Button 
+                onClick={() => handleFormatSelect(selectedFormat)}
               >
-                or click to browse
-              </p>
+                Import
+              </Button>
             </div>
           </div>
-        )}
-      </div>
+        </DialogContent>
+      </Dialog>
+
       <input
         type="file"
         ref={fileInputRef}
@@ -473,7 +750,7 @@ export default function JsonViewer() {
         // @ts-expect-error - DragEvent types are not fully compatible
         webkitdirectory=""
       />
-    </div>
+    </>
   )
 }
 

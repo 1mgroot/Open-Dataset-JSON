@@ -2,7 +2,8 @@ import * as React from "react"
 import { ArrowUpDown, ArrowUp, ArrowDown, GripVertical } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { SortConfig } from "../types/types"
+import { SortConfig, ColumnMetadata } from "../types/types"
+import { MetadataTooltip } from "./metadata-tooltip"
 import {
   DndContext,
   closestCenter,
@@ -25,7 +26,7 @@ import {
 } from '@dnd-kit/modifiers'
 
 interface TableComponentProps {
-  columns: { name: string; label: string }[]
+  columns: ColumnMetadata[]
   rows: unknown[][]
   columnOrder: string[]
   visibleColumns: string[]
@@ -41,12 +42,14 @@ function DraggableHeader({
   sortConfig,
   handleSort,
   isVisible,
+  columnOrder,
 }: { 
-  column: { name: string; label: string }
+  column: ColumnMetadata
   showColumnNames: boolean
   sortConfig: SortConfig[]
   handleSort: (columnName: string) => void
   isVisible: boolean
+  columnOrder: string[]
 }) {
   const {
     attributes,
@@ -73,9 +76,10 @@ function DraggableHeader({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "border-b bg-background px-4 py-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
+        "border-b border-r border-border bg-background px-4 py-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 last:border-r-0",
         !isVisible && "hidden",
-        isDragging && "z-50"
+        isDragging && "z-50",
+        column.name === columnOrder[0] && "sticky left-0 z-20 bg-background after:absolute after:right-0 after:top-0 after:h-full after:border-r after:border-border"
       )}
       {...attributes}
     >
@@ -85,20 +89,22 @@ function DraggableHeader({
           <GripVertical className="h-4 w-4 text-muted-foreground" />
         </div>
         {/* Sort Button */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-3 h-8 data-[state=open]:bg-accent"
-          onClick={(e) => {
-            e.stopPropagation()
-            handleSort(column.name)
-          }}
-        >
-          <span>{showColumnNames ? column.name : column.label}</span>
-          {!sort && <ArrowUpDown className="ml-2 h-4 w-4" />}
-          {sort?.direction === 'asc' && <ArrowUp className="ml-2 h-4 w-4" />}
-          {sort?.direction === 'desc' && <ArrowDown className="ml-2 h-4 w-4" />}
-        </Button>
+        <MetadataTooltip metadata={column}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-3 h-8 data-[state=open]:bg-accent"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleSort(column.name)
+            }}
+          >
+            <span>{showColumnNames ? column.name : column.label}</span>
+            {!sort && <ArrowUpDown className="ml-2 h-4 w-4" />}
+            {sort?.direction === 'asc' && <ArrowUp className="ml-2 h-4 w-4" />}
+            {sort?.direction === 'desc' && <ArrowDown className="ml-2 h-4 w-4" />}
+          </Button>
+        </MetadataTooltip>
       </div>
     </th>
   )
@@ -174,6 +180,7 @@ export function TableComponent({
                       sortConfig={sortConfig}
                       handleSort={handleSort}
                       isVisible={visibleColumns.includes(column.name)}
+                      columnOrder={columnOrder}
                     />
                   )
                 })}
@@ -182,7 +189,7 @@ export function TableComponent({
           </thead>
           <tbody>
             {rows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
+              <tr key={rowIndex} className="border-b border-border even:bg-muted">
                 {visibleColumns.map((colName, colIndex) => {
                   const column = columns.find(col => col.name === colName)
                   if (!column) return null
@@ -194,8 +201,9 @@ export function TableComponent({
                     <td
                       key={colName}
                       className={cn(
-                        "p-2 border-r last:border-r-0",
-                        colIndex === 0 && "sticky left-0 bg-background"
+                        "p-2 border-r border-border last:border-r-0",
+                        colIndex === 0 && "sticky left-0 after:absolute after:right-0 after:top-0 after:h-full after:border-r after:border-border",
+                        colIndex === 0 && (rowIndex % 2 === 0 ? "bg-background" : "bg-muted" )
                       )}
                     >
                       {String(row[originalColumnIndex] ?? '')}
