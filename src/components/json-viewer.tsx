@@ -513,6 +513,7 @@ export default function JsonViewer() {
                           <Button
                             variant="outline"
                             size="sm"
+                            className="h-9"
                             onClick={() => setShowColumnNames(!showColumnNames)}
                           >
                             <Tag className="mr-2 h-4 w-4" />

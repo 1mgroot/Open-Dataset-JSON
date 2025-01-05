@@ -41,7 +41,8 @@ export function ColumnVisibilityToggle({
         <Button
           variant="outline"
           role="combobox"
-          className="w-[200px] justify-between"
+          size="sm"
+          className="h-9 w-[200px] justify-between"
         >
           {`${visibleColumns.length} columns selected`}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
