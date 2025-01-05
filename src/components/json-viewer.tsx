@@ -88,7 +88,7 @@ export default function JsonViewer() {
           path: file.webkitRelativePath
         })
       } catch (error) {
-        console.error(`Error processing file ${file.name}:`, error)
+        continue
       }
     }
 
@@ -160,7 +160,6 @@ export default function JsonViewer() {
             }]
           }
         } catch (error) {
-          console.error(`Error processing file ${file.name}:`, error)
           return null
         }
       }
@@ -246,7 +245,6 @@ export default function JsonViewer() {
         message: `Filter applied successfully. Showing ${filtered.length} of ${rows.length} rows.`
       };
     } catch (error) {
-      console.error("Filter error:", error);
       setFilteredRows(rows);
       return { 
         success: false, 

@@ -124,15 +124,6 @@ export function TableComponent({
     success: boolean
   } | null>(null)
 
-  // Debug current state
-  React.useEffect(() => {
-    console.log('Current column order:', columnOrder)
-    console.log('Current visible columns:', visibleColumns)
-    if (lastDragOperation) {
-      console.log('Last drag operation:', lastDragOperation)
-    }
-  }, [columnOrder, visibleColumns, lastDragOperation])
-
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -146,10 +137,6 @@ export function TableComponent({
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event
-    console.log('Drag start:', {
-      activeId: active.id,
-      activeData: active.data.current
-    })
     setIsDragging(true)
   }
 
@@ -157,26 +144,11 @@ export function TableComponent({
     setIsDragging(false)
     const { active, over } = event
 
-    console.log('Drag end:', {
-      activeId: active.id,
-      overId: over?.id,
-      activeData: active.data.current,
-      overData: over?.data.current
-    })
-
     if (over && active.id !== over.id) {
       const oldIndex = columnOrder.findIndex(col => col === active.id)
       const newIndex = columnOrder.findIndex(col => col === over.id)
 
-      console.log('Reordering:', {
-        oldIndex,
-        newIndex,
-        currentOrder: columnOrder,
-        willBe: arrayMove(columnOrder, oldIndex, newIndex)
-      })
-
       if (oldIndex === -1 || newIndex === -1) {
-        console.error('Invalid indices detected:', { oldIndex, newIndex, columnOrder })
         setLastDragOperation({
           activeId: String(active.id),
           overId: over ? String(over.id) : null,
