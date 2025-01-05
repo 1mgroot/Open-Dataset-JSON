@@ -2,6 +2,7 @@ export interface FileData {
   name: string
   content: Record<string, unknown>
   path: string
+  rawFile: File
 }
 
 export interface FolderData {

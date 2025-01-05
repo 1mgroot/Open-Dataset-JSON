@@ -21,6 +21,8 @@ import { PaginationControls } from './pagination-controls'
 import { FolderData, FileData, SortConfig, ColumnMetadata, DefineXmlMetadata, DefineXmlFileMetadata } from '../types/types'
 import { FileTooltip } from './file-tooltip'
 import { FolderTooltip } from './folder-tooltip'
+import { Progress } from "@/components/ui/progress"
+import oboe from 'oboe'
 
 const ROWS_PER_PAGE = 30
 
@@ -71,6 +73,8 @@ export default function JsonViewer() {
   const [selectedFormat, setSelectedFormat] = useState<'json' | 'ndjson'>('json')
   const [pendingFiles, setPendingFiles] = useState<FileList | null>(null)
   const [pendingDirEntry, setPendingDirEntry] = useState<FileSystemDirectoryEntry | null>(null)
+  const [loadingProgress, setLoadingProgress] = useState<number>(0)
+  const [isLoadingRows, setIsLoadingRows] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -102,6 +106,8 @@ export default function JsonViewer() {
   }, [selectedFolder, subfolders]);
 
   const processFiles = async (files: FileList, format: 'json' | 'ndjson') => {
+    console.log(`Processing ${files.length} files:`, Array.from(files).map(f => `${f.name} (${(f.size / (1024 * 1024)).toFixed(2)} MB)`))
+    
     const rootPath = files[0].webkitRelativePath.split('/')[0]
     const folderMap = new Map<string, FolderData>()
     let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
@@ -115,6 +121,7 @@ export default function JsonViewer() {
           const { metadata, fileMetadata } = await parseDefineXml(content)
           defineXmlMetadata = metadata
           defineXmlFileMetadata = fileMetadata
+          console.log('Found and parsed define.xml')
           break
         } catch {
           console.warn('Failed to parse define.xml')
@@ -122,17 +129,31 @@ export default function JsonViewer() {
       }
     }
 
+    const totalFiles = Array.from(files).filter(file => {
+      const fileExt = format === 'json' ? '.json' : '.ndjson'
+      return file.name.endsWith(fileExt)
+    }).length
+    console.log(`Found ${totalFiles} ${format} files to process`)
+
+    let processedFiles = 0
+
     for (const file of Array.from(files)) {
       const pathParts = file.webkitRelativePath.split('/')
       const fileExt = format === 'json' ? '.json' : '.ndjson'
-      if (!file.name.endsWith(fileExt)) continue
+      if (!file.name.endsWith(fileExt)) {
+        console.log(`Skipping non-${format} file: ${file.name}`)
+        continue
+      }
 
       // Handle both root-level files and files in subfolders
       const folderName = pathParts.length > 2 ? pathParts[1] : rootPath
       const folderPath = pathParts.length > 2 ? `${rootPath}/${folderName}` : rootPath
 
+      console.log(`Processing ${file.name} in folder ${folderPath}`)
+
       let folderData = folderMap.get(folderName)
       if (!folderData) {
+        console.log(`Creating new folder: ${folderName}`)
         folderData = {
           name: folderName,
           path: folderPath,
@@ -142,62 +163,135 @@ export default function JsonViewer() {
       }
 
       try {
-        const content = await file.text()
-        let parsedContent: Record<string, unknown>
-
         if (format === 'ndjson') {
+          const content = await file.text()
           const lines = content.split(/\r?\n/).filter(line => line.trim())
           if (lines.length === 0) continue
 
           const metadata = JSON.parse(lines[0])
           const rows = lines.slice(1).map(line => JSON.parse(line))
           
-          parsedContent = {
+          const parsedContent = {
             ...metadata,
             rows: rows
           }
-        } else {
-          parsedContent = JSON.parse(content)
-        }
 
-        // Add define.xml metadata if available
-        if (defineXmlMetadata && parsedContent.columns) {
-          const columns = parsedContent.columns as ColumnMetadata[]
-          columns.forEach(col => {
-            const defineMetadata = defineXmlMetadata?.get(col.itemOID)
-            if (defineMetadata) {
-              col.defineXmlMetadata = defineMetadata
-            }
+          // Add define.xml metadata if available
+          if (defineXmlMetadata && parsedContent.columns) {
+            const columns = parsedContent.columns as ColumnMetadata[]
+            columns.forEach(col => {
+              const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+              if (defineMetadata) {
+                col.defineXmlMetadata = defineMetadata
+              }
+            })
+          }
+
+          folderData.files.push({
+            name: file.name,
+            content: {
+              ...parsedContent,
+              ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+            },
+            path: file.webkitRelativePath,
+            rawFile: file
           })
+        } else {
+          // For JSON files, we'll only read metadata first
+          console.log(`Reading metadata for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`)
+          
+          try {
+            // Read only the first chunk to get metadata
+            const chunk = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => {
+                const content = reader.result as string
+                console.log(`Read first ${(content.length / (1024 * 1024)).toFixed(2)}MB of ${file.name}`)
+                const rowsStart = content.indexOf('"rows":[')
+                if (rowsStart === -1) {
+                  console.warn(`No "rows" field found in first chunk of ${file.name}`)
+                  resolve(content)
+                } else {
+                  const truncatedContent = content.substring(0, rowsStart) + '"rows":[]' + '}'
+                  console.log(`Truncated content at position ${rowsStart}`)
+                  resolve(truncatedContent)
+                }
+              }
+              reader.onerror = (error) => {
+                console.error(`Error reading ${file.name}:`, error)
+                reject(error)
+              }
+              // Read only first 1MB which should be enough for metadata
+              const blob = file.slice(0, 1024 * 1024)
+              reader.readAsText(blob)
+            })
+
+            console.log(`Parsing metadata JSON for ${file.name}`)
+            const parsedContent = JSON.parse(chunk)
+            console.log(`Successfully parsed metadata for ${file.name}:`, {
+              columns: parsedContent.columns?.length || 0,
+              records: parsedContent.records || 0
+            })
+
+            // Add define.xml metadata if available
+            if (defineXmlMetadata && parsedContent.columns) {
+              console.log(`Adding define.xml metadata to ${file.name}`)
+              const columns = parsedContent.columns as ColumnMetadata[]
+              columns.forEach(col => {
+                const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+                if (defineMetadata) {
+                  col.defineXmlMetadata = defineMetadata
+                }
+              })
+            }
+
+            folderData!.files.push({
+              name: file.name,
+              content: {
+                ...parsedContent,
+                rows: [], // Initially empty, will be loaded on demand
+                ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+              },
+              path: file.webkitRelativePath,
+              rawFile: file
+            })
+            console.log(`Added ${file.name} to folder ${folderData!.name}`)
+          } catch (error) {
+            console.error(`Error processing metadata for ${file.name}:`, error)
+            throw error
+          }
         }
 
-        folderData.files.push({
-          name: file.name,
-          content: {
-            ...parsedContent,
-            ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
-          },
-          path: file.webkitRelativePath
-        })
-      } catch {
+        processedFiles++
+        setLoadingProgress((processedFiles / totalFiles) * 100)
+      } catch (error) {
+        console.error(`Error processing file ${file.name}:`, error)
         continue
       }
     }
 
+    console.log('Final folder map:', Array.from(folderMap.entries()).map(([name, data]) => ({
+      name,
+      path: data.path,
+      fileCount: data.files.length,
+      files: data.files.map(f => f.name)
+    })))
+
     setSubfolders(Array.from(folderMap.values()))
     
     if (folderMap.size > 0) {
-      const firstFolder = folderMap.values().next().value;
+      const firstFolder = folderMap.values().next().value
       if (firstFolder) {
-        setSelectedFolder(firstFolder.path);
+        setSelectedFolder(firstFolder.path)
         if (firstFolder.files.length > 0) {
-          setSelectedFile(firstFolder.files[0].name);
+          setSelectedFile(firstFolder.files[0].name)
         }
       }
     }
 
     setCurrentPage(1)
     setSidebarOpen(false)
+    setLoadingProgress(0)
   }
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -259,34 +353,28 @@ export default function JsonViewer() {
 
         // If no valid subfolders but has files directly, return as a single folder
         if (validResults.length === 0) {
-          const files = await Promise.all(
-            entries
-              .filter((e): e is FileSystemFileEntry => e.isFile)
-              .map(async (fileEntry) => {
-                const file = await new Promise<File>((resolve) => {
-                  fileEntry.file(resolve)
-                })
+          const filePromises = entries
+            .filter((e): e is FileSystemFileEntry => e.isFile)
+            .map(async (fileEntry) => {
+              const file = await new Promise<File>((resolve) => {
+                fileEntry.file(resolve)
+              })
 
-                const fileExt = format === 'json' ? '.json' : '.ndjson'
-                if (!file.name.endsWith(fileExt)) return null
+              const fileExt = format === 'json' ? '.json' : '.ndjson'
+              if (!file.name.endsWith(fileExt)) return null
 
-                try {
+              try {
+                if (format === 'ndjson') {
                   const content = await file.text()
-                  let parsedContent: Record<string, unknown>
+                  const lines = content.split(/\r?\n/).filter(line => line.trim())
+                  if (lines.length === 0) return null
 
-                  if (format === 'ndjson') {
-                    const lines = content.split(/\r?\n/).filter(line => line.trim())
-                    if (lines.length === 0) return null
-
-                    const metadata = JSON.parse(lines[0])
-                    const rows = lines.slice(1).map(line => JSON.parse(line))
-                    
-                    parsedContent = {
-                      ...metadata,
-                      rows: rows
-                    }
-                  } else {
-                    parsedContent = JSON.parse(content)
+                  const metadata = JSON.parse(lines[0])
+                  const rows = lines.slice(1).map(line => JSON.parse(line))
+                  
+                  const parsedContent = {
+                    ...metadata,
+                    rows: rows
                   }
 
                   // Add define.xml metadata if available
@@ -306,20 +394,32 @@ export default function JsonViewer() {
                       ...parsedContent,
                       ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
                     },
-                    path: fileEntry.fullPath
+                    path: fileEntry.fullPath,
+                    rawFile: file
                   }
-                } catch {
-                  return null
+                } else {
+                  // For JSON files, we'll parse them on demand
+                  return {
+                    name: file.name,
+                    content: {
+                      rows: [], // Initially empty, will be loaded on demand
+                      ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                    },
+                    path: fileEntry.fullPath,
+                    rawFile: file
+                  }
                 }
-              })
-          )
+              } catch {
+                return null
+              }
+            })
 
-          const validFiles = files.filter((file): file is FileData => file !== null)
-          if (validFiles.length > 0) {
+          const files = (await Promise.all(filePromises)).filter((file): file is FileData => file !== null)
+          if (files.length > 0) {
             return {
               name: entry.name,
               path: entry.fullPath,
-              files: validFiles
+              files
             }
           }
           return null
@@ -342,46 +442,57 @@ export default function JsonViewer() {
         if (!file.name.endsWith(fileExt)) return null
 
         try {
-          const content = await file.text()
-          let parsedContent: Record<string, unknown>
-
           if (format === 'ndjson') {
+            const content = await file.text()
             const lines = content.split(/\r?\n/).filter(line => line.trim())
             if (lines.length === 0) return null
 
             const metadata = JSON.parse(lines[0])
             const rows = lines.slice(1).map(line => JSON.parse(line))
             
-            parsedContent = {
+            const parsedContent = {
               ...metadata,
               rows: rows
             }
+
+            // Add define.xml metadata if available
+            if (defineXmlMetadata && parsedContent.columns) {
+              const columns = parsedContent.columns as ColumnMetadata[]
+              columns.forEach(col => {
+                const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+                if (defineMetadata) {
+                  col.defineXmlMetadata = defineMetadata
+                }
+              })
+            }
+
+            return {
+              name: entry.name,
+              path: entry.fullPath,
+              files: [{
+                name: file.name,
+                content: {
+                  ...parsedContent,
+                  ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                },
+                path: entry.fullPath,
+                rawFile: file
+              }]
+            }
           } else {
-            parsedContent = JSON.parse(content)
-          }
-
-          // Add define.xml metadata if available
-          if (defineXmlMetadata && parsedContent.columns) {
-            const columns = parsedContent.columns as ColumnMetadata[]
-            columns.forEach(col => {
-              const defineMetadata = defineXmlMetadata?.get(col.itemOID)
-              if (defineMetadata) {
-                col.defineXmlMetadata = defineMetadata
-              }
-            })
-          }
-
-          return {
-            name: entry.name,
-            path: entry.fullPath,
-            files: [{
-              name: file.name,
-              content: {
-                ...parsedContent,
-                ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
-              },
-              path: entry.fullPath
-            }]
+            return {
+              name: entry.name,
+              path: entry.fullPath,
+              files: [{
+                name: file.name,
+                content: {
+                  rows: [], // Initially empty, will be loaded on demand
+                  ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                },
+                path: entry.fullPath,
+                rawFile: file
+              }]
+            }
           }
         } catch {
           return null
@@ -422,16 +533,18 @@ export default function JsonViewer() {
   }, [selectedFileData])
 
   const rows = useMemo(() => {
-    return (selectedFileData?.content as { rows?: unknown[][] })?.rows || []
+    const fileRows = (selectedFileData?.content as { rows?: unknown[][] })?.rows
+    return Array.isArray(fileRows) ? fileRows : []
   }, [selectedFileData])
 
   useEffect(() => {
-    if (columns.length > 0) {
-      const newColumnOrder = columns.map((col: ColumnMetadata) => col.name)
+    const fileColumns = (selectedFileData?.content as { columns?: ColumnMetadata[] })?.columns
+    if (Array.isArray(fileColumns) && fileColumns.length > 0) {
+      const newColumnOrder = fileColumns.map((col: ColumnMetadata) => col.name)
       setColumnOrder(newColumnOrder)
       setVisibleColumns(newColumnOrder)
     }
-  }, [columns])
+  }, [selectedFileData])
 
   // Apply filter to rows based on user input
   const applyFilter = useCallback((filterString: string) => {
@@ -557,6 +670,65 @@ export default function JsonViewer() {
     setVisibleColumns(newVisibleColumns)
   }
 
+  useEffect(() => {
+    const loadRows = async () => {
+      const fileContent = selectedFileData?.content as { rows?: unknown[][] }
+      if (!selectedFileData?.rawFile || (fileContent.rows && fileContent.rows.length > 0)) return
+
+      console.log(`Loading rows for: ${selectedFileData.name} (${(selectedFileData.rawFile.size / (1024 * 1024)).toFixed(2)} MB)`)
+      setIsLoadingRows(true)
+      const startTime = performance.now()
+      let rowCount = 0
+
+      try {
+        // Create a URL for the file
+        const fileUrl = URL.createObjectURL(selectedFileData.rawFile)
+
+        const rows: unknown[][] = []
+        await new Promise<void>((resolve, reject) => {
+          oboe({
+            url: fileUrl,
+            headers: {
+              'Accept': 'application/json'
+            }
+          })
+            .node('rows.*', function(row) {
+              rows.push(row)
+              rowCount++
+              if (rowCount % 10000 === 0) {
+                console.log(`Loaded ${rowCount} rows...`)
+              }
+              return oboe.drop
+            })
+            .done(() => {
+              const duration = ((performance.now() - startTime) / 1000).toFixed(2)
+              console.log(`Finished loading ${rowCount} rows in ${duration}s`)
+              if (selectedFileData.content) {
+                selectedFileData.content.rows = rows
+                setFilteredRows(rows)
+              }
+              resolve()
+            })
+            .fail((error) => {
+              console.error(`Error loading rows for ${selectedFileData.name}:`, error)
+              reject(error)
+            })
+        })
+        
+        // Clean up the URL
+        URL.revokeObjectURL(fileUrl)
+      } catch (error) {
+        console.error(`Error loading rows for ${selectedFileData.name}:`, error)
+      } finally {
+        const duration = ((performance.now() - startTime) / 1000).toFixed(2)
+        console.log(`Total processing time: ${duration}s`)
+        setIsLoadingRows(false)
+      }
+    }
+
+    loadRows()
+  }, [selectedFileData])
+
   return (
     <>
       <div 
@@ -564,6 +736,11 @@ export default function JsonViewer() {
         onDragOver={e => e.preventDefault()}
         onDrop={handleDrop}
       >
+        {(loadingProgress > 0 && loadingProgress < 100) || isLoadingRows ? (
+          <div className="absolute top-0 left-0 right-0 z-50">
+            <Progress value={loadingProgress || 100} className="w-full" />
+          </div>
+        ) : null}
         {/* Mobile Header */}
         <div className="md:hidden flex items-center justify-between p-4 border-b">
           <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
