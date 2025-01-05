@@ -599,19 +599,28 @@ export default function JsonViewer() {
               Choose the format of your dataset files
             </DialogDescription>
           </DialogHeader>
-          <RadioGroup
-            defaultValue={selectedFormat}
-            onValueChange={(value: 'json' | 'ndjson') => handleFormatSelect(value)}
-          >
-            <div className="flex items-center space-x-2">
-              <RadioGroupItem value="json" id="json" />
-              <Label htmlFor="json">JSON</Label>
+          <div className="space-y-4">
+            <RadioGroup
+              value={selectedFormat}
+              onValueChange={(value: 'json' | 'ndjson') => setSelectedFormat(value)}
+            >
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="json" id="json" />
+                <Label htmlFor="json">JSON</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="ndjson" id="ndjson" />
+                <Label htmlFor="ndjson">NDJSON (New-line Delimited JSON)</Label>
+              </div>
+            </RadioGroup>
+            <div className="flex justify-end">
+              <Button 
+                onClick={() => handleFormatSelect(selectedFormat)}
+              >
+                Import
+              </Button>
             </div>
-            <div className="flex items-center space-x-2">
-              <RadioGroupItem value="ndjson" id="ndjson" />
-              <Label htmlFor="ndjson">NDJSON (New-line Delimited JSON)</Label>
-            </div>
-          </RadioGroup>
+          </div>
         </DialogContent>
       </Dialog>
 
