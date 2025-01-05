@@ -68,7 +68,7 @@ export default function JsonViewer() {
       if (pathParts.length < 3) continue
 
       const subfolder = pathParts[1]
-      if (!file.name.endsWith('.json')) continue
+      if (!file.name.endsWith('.json') && !file.name.endsWith('.ndjson')) continue
 
       let folderData = folderMap.get(subfolder)
       if (!folderData) {
@@ -82,9 +82,31 @@ export default function JsonViewer() {
 
       try {
         const content = await file.text()
+        let parsedContent: Record<string, unknown>
+
+        if (file.name.endsWith('.ndjson')) {
+          // Process NDJSON format
+          const lines = content.split(/\r?\n/).filter(line => line.trim())
+          if (lines.length === 0) continue
+
+          // First line contains metadata and column definitions
+          const metadata = JSON.parse(lines[0])
+          
+          // Remaining lines are data rows
+          const rows = lines.slice(1).map(line => JSON.parse(line))
+          
+          parsedContent = {
+            ...metadata,
+            rows: rows
+          }
+        } else {
+          // Process regular JSON format
+          parsedContent = JSON.parse(content)
+        }
+
         folderData.files.push({
           name: file.name,
-          content: JSON.parse(content),
+          content: parsedContent,
           path: file.webkitRelativePath
         })
       } catch {
@@ -146,16 +168,38 @@ export default function JsonViewer() {
           fileEntry.file(resolve)
         })
 
-        if (!file.name.endsWith('.json')) return null
+        if (!file.name.endsWith('.json') && !file.name.endsWith('.ndjson')) return null
 
         try {
           const content = await file.text()
+          let parsedContent: Record<string, unknown>
+
+          if (file.name.endsWith('.ndjson')) {
+            // Process NDJSON format
+            const lines = content.split(/\r?\n/).filter(line => line.trim())
+            if (lines.length === 0) return null
+
+            // First line contains metadata and column definitions
+            const metadata = JSON.parse(lines[0])
+            
+            // Remaining lines are data rows
+            const rows = lines.slice(1).map(line => JSON.parse(line))
+            
+            parsedContent = {
+              ...metadata,
+              rows: rows
+            }
+          } else {
+            // Process regular JSON format
+            parsedContent = JSON.parse(content)
+          }
+
           return {
             name: entry.name,
             path: entry.fullPath,
             files: [{
               name: file.name,
-              content: JSON.parse(content) as Record<string, unknown>,
+              content: parsedContent,
               path: entry.fullPath
             }]
           }
