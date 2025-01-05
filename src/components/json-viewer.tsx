@@ -18,9 +18,42 @@ import { FilterInput } from './filter-input'
 import { ColumnVisibilityToggle } from './column-visibility-toggle'
 import { TableComponent } from './table-component'
 import { PaginationControls } from './pagination-controls'
-import { FolderData, FileData, SortConfig, ColumnMetadata } from '../types/types'
+import { FolderData, FileData, SortConfig, ColumnMetadata, DefineXmlMetadata, DefineXmlFileMetadata } from '../types/types'
+import { FileTooltip } from './file-tooltip'
+import { FolderTooltip } from './folder-tooltip'
 
 const ROWS_PER_PAGE = 30
+
+async function parseDefineXml(xmlText: string) {
+  const parser = new DOMParser()
+  const xmlDoc = parser.parseFromString(xmlText, 'text/xml')
+  const itemRefs = xmlDoc.getElementsByTagName('ItemRef')
+  const metadata = new Map<string, DefineXmlMetadata>()
+
+  // Parse file-level metadata
+  const odm = xmlDoc.getElementsByTagName('ODM')[0]
+  const fileMetadata: DefineXmlFileMetadata = {
+    creationDateTime: odm?.getAttribute('CreationDateTime') || undefined,
+    name: odm?.getElementsByTagName('ItemGroupDef')[0]?.getAttribute('Name') || undefined,
+    label: odm?.getElementsByTagName('ItemGroupDef')[0]?.getElementsByTagName('Description')[0]?.textContent || undefined,
+    hasNoData: odm?.getElementsByTagName('ItemGroupDef')[0]?.getAttribute('def:HasNoData') === 'Yes'
+  }
+
+  for (const itemRef of Array.from(itemRefs)) {
+    const itemOID = itemRef.getAttribute('ItemOID')
+    if (!itemOID) continue
+
+    metadata.set(itemOID, {
+      itemOID,
+      orderNumber: itemRef.getAttribute('OrderNumber') || undefined,
+      mandatory: itemRef.getAttribute('Mandatory') || undefined,
+      methodOID: itemRef.getAttribute('MethodOID') || undefined,
+      whereClauseOID: itemRef.getElementsByTagName('def:WhereClauseRef')[0]?.getAttribute('WhereClauseOID') || undefined
+    })
+  }
+
+  return { metadata, fileMetadata }
+}
 
 export default function JsonViewer() {
   const [subfolders, setSubfolders] = useState<FolderData[]>([])
@@ -71,6 +104,23 @@ export default function JsonViewer() {
   const processFiles = async (files: FileList, format: 'json' | 'ndjson') => {
     const rootPath = files[0].webkitRelativePath.split('/')[0]
     const folderMap = new Map<string, FolderData>()
+    let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
+    let defineXmlFileMetadata: DefineXmlFileMetadata | null = null
+
+    // First, look for define.xml
+    for (const file of Array.from(files)) {
+      if (file.name.toLowerCase() === 'define.xml') {
+        try {
+          const content = await file.text()
+          const { metadata, fileMetadata } = await parseDefineXml(content)
+          defineXmlMetadata = metadata
+          defineXmlFileMetadata = fileMetadata
+          break
+        } catch {
+          console.warn('Failed to parse define.xml')
+        }
+      }
+    }
 
     for (const file of Array.from(files)) {
       const pathParts = file.webkitRelativePath.split('/')
@@ -110,9 +160,23 @@ export default function JsonViewer() {
           parsedContent = JSON.parse(content)
         }
 
+        // Add define.xml metadata if available
+        if (defineXmlMetadata && parsedContent.columns) {
+          const columns = parsedContent.columns as ColumnMetadata[]
+          columns.forEach(col => {
+            const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+            if (defineMetadata) {
+              col.defineXmlMetadata = defineMetadata
+            }
+          })
+        }
+
         folderData.files.push({
           name: file.name,
-          content: parsedContent,
+          content: {
+            ...parsedContent,
+            ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+          },
           path: file.webkitRelativePath
         })
       } catch {
@@ -160,6 +224,9 @@ export default function JsonViewer() {
   }, [])
 
   const processDirectoryEntry = async (dirEntry: FileSystemDirectoryEntry, format: 'json' | 'ndjson') => {
+    let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
+    let defineXmlFileMetadata: DefineXmlFileMetadata | null = null
+
     const processEntry = async (entry: FileSystemEntry): Promise<FolderData | null> => {
       if (entry.isDirectory) {
         const directoryEntry = entry as FileSystemDirectoryEntry
@@ -167,6 +234,25 @@ export default function JsonViewer() {
         const entries = await new Promise<FileSystemEntry[]>((resolve) => {
           reader.readEntries((entries) => resolve(entries))
         })
+
+        // First, look for define.xml
+        for (const subEntry of entries) {
+          if (subEntry.isFile && subEntry.name.toLowerCase() === 'define.xml') {
+            const fileEntry = subEntry as FileSystemFileEntry
+            try {
+              const file = await new Promise<File>((resolve) => {
+                fileEntry.file(resolve)
+              })
+              const content = await file.text()
+              const { metadata, fileMetadata } = await parseDefineXml(content)
+              defineXmlMetadata = metadata
+              defineXmlFileMetadata = fileMetadata
+              break
+            } catch {
+              console.warn('Failed to parse define.xml')
+            }
+          }
+        }
 
         const results = await Promise.all(entries.map(processEntry))
         const validResults = results.filter((result): result is FolderData => result !== null)
@@ -203,9 +289,23 @@ export default function JsonViewer() {
                     parsedContent = JSON.parse(content)
                   }
 
+                  // Add define.xml metadata if available
+                  if (defineXmlMetadata && parsedContent.columns) {
+                    const columns = parsedContent.columns as ColumnMetadata[]
+                    columns.forEach(col => {
+                      const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+                      if (defineMetadata) {
+                        col.defineXmlMetadata = defineMetadata
+                      }
+                    })
+                  }
+
                   return {
                     name: file.name,
-                    content: parsedContent,
+                    content: {
+                      ...parsedContent,
+                      ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                    },
                     path: fileEntry.fullPath
                   }
                 } catch {
@@ -260,12 +360,26 @@ export default function JsonViewer() {
             parsedContent = JSON.parse(content)
           }
 
+          // Add define.xml metadata if available
+          if (defineXmlMetadata && parsedContent.columns) {
+            const columns = parsedContent.columns as ColumnMetadata[]
+            columns.forEach(col => {
+              const defineMetadata = defineXmlMetadata?.get(col.itemOID)
+              if (defineMetadata) {
+                col.defineXmlMetadata = defineMetadata
+              }
+            })
+          }
+
           return {
             name: entry.name,
             path: entry.fullPath,
             files: [{
               name: file.name,
-              content: parsedContent,
+              content: {
+                ...parsedContent,
+                ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+              },
               path: entry.fullPath
             }]
           }
@@ -464,21 +578,22 @@ export default function JsonViewer() {
           <div className="p-4 font-semibold text-lg border-b">Folders</div>
           <div className="py-2">
             {subfolders.map(folder => (
-              <div
-                key={folder.path}
-                className={`px-4 py-2 cursor-pointer hover:bg-accent ${
-                  selectedFolder === folder.path ? 'bg-accent text-accent-foreground' : ''
-                }`}
-                onClick={() => {
-                  setSelectedFolder(folder.path)
-                  setSidebarOpen(false)
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <Folder className="h-4 w-4" />
-                  <span>{folder.name}</span>
+              <FolderTooltip key={folder.path} folder={folder}>
+                <div
+                  className={`px-4 py-2 cursor-pointer hover:bg-accent ${
+                    selectedFolder === folder.path ? 'bg-accent text-accent-foreground' : ''
+                  }`}
+                  onClick={() => {
+                    setSelectedFolder(folder.path)
+                    setSidebarOpen(false)
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <Folder className="h-4 w-4" />
+                    <span>{folder.name}</span>
+                  </div>
                 </div>
-              </div>
+              </FolderTooltip>
             ))}
           </div>
         </div>
@@ -494,9 +609,11 @@ export default function JsonViewer() {
               <div className="border-b overflow-x-auto">
                 <TabsList className="w-max min-w-full flex justify-start">
                   {selectedFolderData.files.map(file => (
-                    <TabsTrigger key={file.path} value={file.name} className="data-[state=active]:bg-background flex-shrink-0">
-                      {file.name}
-                    </TabsTrigger>
+                    <FileTooltip key={file.path} file={file}>
+                      <TabsTrigger value={file.name} className="data-[state=active]:bg-background flex-shrink-0">
+                        {file.name}
+                      </TabsTrigger>
+                    </FileTooltip>
                   ))}
                 </TabsList>
               </div>
