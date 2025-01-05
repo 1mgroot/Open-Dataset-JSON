@@ -116,13 +116,6 @@ export function TableComponent({
   onColumnOrderChange,
 }: TableComponentProps) {
   const [isDragging, setIsDragging] = React.useState(false)
-  const [lastDragOperation, setLastDragOperation] = React.useState<{
-    activeId: string | null,
-    overId: string | null,
-    oldIndex: number,
-    newIndex: number,
-    success: boolean
-  } | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -135,8 +128,7 @@ export function TableComponent({
     })
   )
 
-  const handleDragStart = (event: DragStartEvent) => {
-    const { active } = event
+  const handleDragStart = () => {
     setIsDragging(true)
   }
 
@@ -149,23 +141,8 @@ export function TableComponent({
       const newIndex = columnOrder.findIndex(col => col === over.id)
 
       if (oldIndex === -1 || newIndex === -1) {
-        setLastDragOperation({
-          activeId: String(active.id),
-          overId: over ? String(over.id) : null,
-          oldIndex,
-          newIndex,
-          success: false
-        })
         return
       }
-
-      setLastDragOperation({
-        activeId: String(active.id),
-        overId: String(over.id),
-        oldIndex,
-        newIndex,
-        success: true
-      })
 
       onColumnOrderChange(arrayMove(columnOrder, oldIndex, newIndex))
     }

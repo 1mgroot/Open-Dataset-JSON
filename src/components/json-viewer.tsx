@@ -87,7 +87,7 @@ export default function JsonViewer() {
           content: JSON.parse(content),
           path: file.webkitRelativePath
         })
-      } catch (error) {
+      } catch {
         continue
       }
     }
@@ -159,7 +159,7 @@ export default function JsonViewer() {
               path: entry.fullPath
             }]
           }
-        } catch (error) {
+        } catch {
           return null
         }
       }
