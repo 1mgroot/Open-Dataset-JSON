@@ -106,8 +106,6 @@ export default function JsonViewer() {
   }, [selectedFolder, subfolders]);
 
   const processFiles = async (files: FileList, format: 'json' | 'ndjson') => {
-    console.log(`Processing ${files.length} files:`, Array.from(files).map(f => `${f.name} (${(f.size / (1024 * 1024)).toFixed(2)} MB)`))
-    
     const rootPath = files[0].webkitRelativePath.split('/')[0]
     const folderMap = new Map<string, FolderData>()
     let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
@@ -121,7 +119,6 @@ export default function JsonViewer() {
           const { metadata, fileMetadata } = await parseDefineXml(content)
           defineXmlMetadata = metadata
           defineXmlFileMetadata = fileMetadata
-          console.log('Found and parsed define.xml')
           break
         } catch {
           console.warn('Failed to parse define.xml')
@@ -133,27 +130,20 @@ export default function JsonViewer() {
       const fileExt = format === 'json' ? '.json' : '.ndjson'
       return file.name.endsWith(fileExt)
     }).length
-    console.log(`Found ${totalFiles} ${format} files to process`)
 
     let processedFiles = 0
 
     for (const file of Array.from(files)) {
       const pathParts = file.webkitRelativePath.split('/')
       const fileExt = format === 'json' ? '.json' : '.ndjson'
-      if (!file.name.endsWith(fileExt)) {
-        console.log(`Skipping non-${format} file: ${file.name}`)
-        continue
-      }
+      if (!file.name.endsWith(fileExt)) continue
 
       // Handle both root-level files and files in subfolders
       const folderName = pathParts.length > 2 ? pathParts[1] : rootPath
       const folderPath = pathParts.length > 2 ? `${rootPath}/${folderName}` : rootPath
 
-      console.log(`Processing ${file.name} in folder ${folderPath}`)
-
       let folderData = folderMap.get(folderName)
       if (!folderData) {
-        console.log(`Creating new folder: ${folderName}`)
         folderData = {
           name: folderName,
           path: folderPath,
@@ -198,7 +188,7 @@ export default function JsonViewer() {
           })
         } else {
           // For JSON files, we'll only read metadata first
-          console.log(`Reading metadata for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`)
+          console.log(`Processing file: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`)
           
           try {
             // Read only the first chunk to get metadata
@@ -206,32 +196,22 @@ export default function JsonViewer() {
               const reader = new FileReader()
               reader.onload = () => {
                 const content = reader.result as string
-                console.log(`Read first ${(content.length / (1024 * 1024)).toFixed(2)}MB of ${file.name}`)
                 const rowsStart = content.indexOf('"rows":[')
                 if (rowsStart === -1) {
-                  console.warn(`No "rows" field found in first chunk of ${file.name}`)
                   resolve(content)
                 } else {
-                  const truncatedContent = content.substring(0, rowsStart) + '"rows":[]' + '}'
-                  console.log(`Truncated content at position ${rowsStart}`)
-                  resolve(truncatedContent)
+                  resolve(content.substring(0, rowsStart) + '"rows":[]' + '}')
                 }
               }
-              reader.onerror = (error) => {
-                console.error(`Error reading ${file.name}:`, error)
-                reject(error)
-              }
+              reader.onerror = reject
               // Read only first 1MB which should be enough for metadata
               const blob = file.slice(0, 1024 * 1024)
               reader.readAsText(blob)
             })
 
-            console.log(`Parsing metadata JSON for ${file.name}`)
+            console.log(`Parsing metadata for: ${file.name}`)
             const parsedContent = JSON.parse(chunk)
-            console.log(`Successfully parsed metadata for ${file.name}:`, {
-              columns: parsedContent.columns?.length || 0,
-              records: parsedContent.records || 0
-            })
+            console.log(`Found ${parsedContent.columns?.length || 0} columns in ${file.name}`)
 
             // Add define.xml metadata if available
             if (defineXmlMetadata && parsedContent.columns) {
@@ -255,7 +235,6 @@ export default function JsonViewer() {
               path: file.webkitRelativePath,
               rawFile: file
             })
-            console.log(`Added ${file.name} to folder ${folderData!.name}`)
           } catch (error) {
             console.error(`Error processing metadata for ${file.name}:`, error)
             throw error
@@ -269,13 +248,6 @@ export default function JsonViewer() {
         continue
       }
     }
-
-    console.log('Final folder map:', Array.from(folderMap.entries()).map(([name, data]) => ({
-      name,
-      path: data.path,
-      fileCount: data.files.length,
-      files: data.files.map(f => f.name)
-    })))
 
     setSubfolders(Array.from(folderMap.values()))
     
