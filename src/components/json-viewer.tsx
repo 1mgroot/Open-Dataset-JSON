@@ -98,7 +98,8 @@ export default function JsonViewer() {
   useEffect(() => {
     const currentFolder = subfolders.find(folder => folder.path === selectedFolder);
     if (currentFolder && currentFolder.files.length > 0) {
-      setSelectedFile(currentFolder.files[0].name);
+      const firstFile = currentFolder.files[0].name;
+      setSelectedFile(firstFile);
     } else {
       setSelectedFile('');
     }
@@ -252,11 +253,12 @@ export default function JsonViewer() {
     setSubfolders(Array.from(folderMap.values()))
     
     if (folderMap.size > 0) {
-      const firstFolder = folderMap.values().next().value
+      const firstFolder = folderMap.values().next().value;
       if (firstFolder) {
-        setSelectedFolder(firstFolder.path)
+        setSelectedFolder(firstFolder.path);
         if (firstFolder.files.length > 0) {
-          setSelectedFile(firstFolder.files[0].name)
+          const firstFile = firstFolder.files[0].name;
+          setSelectedFile(firstFile);
         }
       }
     }
@@ -605,8 +607,9 @@ export default function JsonViewer() {
   const currentRows = sortedRows.slice(startIndex, endIndex)
 
   const handleFileChange = (fileName: string) => {
-    setSelectedFile(fileName)
-    resetState()
+    console.log('Changing file to:', fileName);
+    setSelectedFile(fileName);
+    resetState();
   }
 
   const handleSort = (columnName: string) => {
@@ -751,7 +754,8 @@ export default function JsonViewer() {
         <div className="flex-1 flex flex-col overflow-hidden">
           {selectedFolderData ? (
             <Tabs
-              value={selectedFile}
+              defaultValue={selectedFolderData.files[0]?.name}
+              value={selectedFile || selectedFolderData.files[0]?.name}
               onValueChange={handleFileChange}
               className="flex-1 flex flex-col overflow-hidden"
             >
@@ -759,7 +763,11 @@ export default function JsonViewer() {
                 <TabsList className="w-max min-w-full flex justify-start">
                   {selectedFolderData.files.map(file => (
                     <FileTooltip key={file.path} file={file}>
-                      <TabsTrigger value={file.name} className="data-[state=active]:bg-background flex-shrink-0">
+                      <TabsTrigger 
+                        value={file.name} 
+                        className="data-[state=active]:bg-background flex-shrink-0"
+                        data-state={file.name === selectedFile ? 'active' : 'inactive'}
+                      >
                         {file.name}
                       </TabsTrigger>
                     </FileTooltip>
@@ -772,6 +780,7 @@ export default function JsonViewer() {
                     key={file.path}
                     value={file.name}
                     className="flex-1 p-4 data-[state=active]:flex flex-col h-full overflow-hidden"
+                    data-state={file.name === selectedFile ? 'active' : 'inactive'}
                   >
                     <div className="space-y-4 mb-4">
                       <div className="flex justify-between items-center">
