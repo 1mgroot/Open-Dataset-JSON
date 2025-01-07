@@ -301,126 +301,134 @@ export function FilterBuilder({ columns, onApplyFilter, rows }: FilterBuilderPro
               {/* Conditions */}
               <div className="space-y-2">
                 {conditions.map((condition) => (
-                  <div key={condition.id} className="flex items-center gap-2">
-                    <Select
-                      value={condition.column}
-                      onValueChange={(value) => updateCondition(condition.id, { column: value })}
-                    >
-                      <SelectTrigger 
-                        className="w-[180px]"
-                        title={getColumnTooltip(columns.find(col => col.name === condition.column)!)}
-                      >
-                        <SelectValue placeholder="Select column" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <ScrollArea className="h-[200px]">
-                          {columns.map((col) => (
-                            <SelectItem 
-                              key={col.name} 
-                              value={col.name}
-                              title={getColumnTooltip(col)}
-                            >
-                              {getColumnDisplay(col)}
-                              {uniqueValues.exceedsLimit(col.name) && (
-                                <span className="ml-2 text-xs text-muted-foreground">
-                                  (many values)
-                                </span>
-                              )}
-                            </SelectItem>
-                          ))}
-                        </ScrollArea>
-                      </SelectContent>
-                    </Select>
-
-                    <Select
-                      value={condition.operator}
-                      onValueChange={(value) => updateCondition(condition.id, { operator: value })}
-                    >
-                      <SelectTrigger 
-                        className="w-[180px]"
-                        title={getOperatorTooltip(condition.operator, condition.column)}
-                      >
-                        <SelectValue placeholder="Select operator" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {getOperatorsForColumn(condition.column).map((op) => (
-                          <SelectItem 
-                            key={op.value} 
-                            value={op.value}
-                            title={getOperatorTooltip(op.value, condition.column)}
-                          >
-                            {op.label} ({op.symbol})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-
-                    {(condition.operator === "in" || condition.operator === "not in") && !uniqueValues.exceedsLimit(condition.column) ? (
+                  <div key={condition.id} className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-4">
                       <Select
-                        value={condition.selectedValues?.join(',')}
-                        onValueChange={(value) => {
-                          console.group('Value selection change')
-                          console.log('Current value:', value)
-                          console.log('Current selected values:', condition.selectedValues)
-
-                          const currentValues = condition.selectedValues || []
-                          const newValues = currentValues.includes(value)
-                            ? currentValues.filter(v => v !== value)
-                            : [...currentValues, value]
-
-                          console.log('New selected values:', newValues)
-                          console.groupEnd()
-
-                          updateCondition(condition.id, { 
-                            selectedValues: newValues,
-                            value: newValues.join(', ')
-                          })
-                        }}
+                        value={condition.column}
+                        onValueChange={(value) => updateCondition(condition.id, { column: value })}
                       >
-                        <SelectTrigger className="w-[180px]">
-                          <SelectValue>
-                            {condition.selectedValues?.length 
-                              ? `${condition.selectedValues.length} selected`
-                              : "Select values"}
-                          </SelectValue>
+                        <SelectTrigger 
+                          className="w-full"
+                          title={getColumnTooltip(columns.find(col => col.name === condition.column)!)}
+                        >
+                          <SelectValue placeholder="Select column" />
                         </SelectTrigger>
                         <SelectContent>
                           <ScrollArea className="h-[200px]">
-                            {uniqueValues.getValues(condition.column).map((value) => (
+                            {columns.map((col) => (
                               <SelectItem 
-                                key={value} 
-                                value={value}
-                                className="relative flex items-center"
+                                key={col.name} 
+                                value={col.name}
+                                title={getColumnTooltip(col)}
                               >
-                                <div className="flex items-center">
-                                  <div className="w-4 h-4 mr-2 border rounded flex items-center justify-center">
-                                    {condition.selectedValues?.includes(value) && (
-                                      <span className="text-primary">✓</span>
-                                    )}
-                                  </div>
-                                  {value}
-                                </div>
+                                {getColumnDisplay(col)}
+                                {uniqueValues.exceedsLimit(col.name) && (
+                                  <span className="ml-2 text-xs text-muted-foreground">
+                                    (many values)
+                                  </span>
+                                )}
                               </SelectItem>
                             ))}
                           </ScrollArea>
                         </SelectContent>
                       </Select>
-                    ) : (
-                      <Input
-                        value={condition.value}
-                        onChange={(e) => updateCondition(condition.id, { value: e.target.value })}
-                        className="w-[180px]"
-                        placeholder="Enter value"
-                      />
-                    )}
+                    </div>
 
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeCondition(condition.id)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
+                    <div className="col-span-3">
+                      <Select
+                        value={condition.operator}
+                        onValueChange={(value) => updateCondition(condition.id, { operator: value })}
+                      >
+                        <SelectTrigger 
+                          className="w-full"
+                          title={getOperatorTooltip(condition.operator, condition.column)}
+                        >
+                          <SelectValue placeholder="Select operator" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getOperatorsForColumn(condition.column).map((op) => (
+                            <SelectItem 
+                              key={op.value} 
+                              value={op.value}
+                              title={getOperatorTooltip(op.value, condition.column)}
+                            >
+                              {op.label} ({op.symbol})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="col-span-4">
+                      {(condition.operator === "in" || condition.operator === "not in") && !uniqueValues.exceedsLimit(condition.column) ? (
+                        <Select
+                          value={condition.selectedValues?.join(',')}
+                          onValueChange={(value) => {
+                            console.group('Value selection change')
+                            console.log('Current value:', value)
+                            console.log('Current selected values:', condition.selectedValues)
+
+                            const currentValues = condition.selectedValues || []
+                            const newValues = currentValues.includes(value)
+                              ? currentValues.filter(v => v !== value)
+                              : [...currentValues, value]
+
+                            console.log('New selected values:', newValues)
+                            console.groupEnd()
+
+                            updateCondition(condition.id, { 
+                              selectedValues: newValues,
+                              value: newValues.join(', ')
+                            })
+                          }}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue>
+                              {condition.selectedValues?.length 
+                                ? `${condition.selectedValues.length} selected`
+                                : "Select values"}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <ScrollArea className="h-[200px]">
+                              {uniqueValues.getValues(condition.column).map((value) => (
+                                <SelectItem 
+                                  key={value} 
+                                  value={value}
+                                  className="relative flex items-center"
+                                >
+                                  <div className="flex items-center">
+                                    <div className="w-4 h-4 mr-2 border rounded flex items-center justify-center">
+                                      {condition.selectedValues?.includes(value) && (
+                                        <span className="text-primary">✓</span>
+                                      )}
+                                    </div>
+                                    {value}
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </ScrollArea>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          value={condition.value}
+                          onChange={(e) => updateCondition(condition.id, { value: e.target.value })}
+                          className="w-full"
+                          placeholder="Enter value"
+                        />
+                      )}
+                    </div>
+
+                    <div className="col-span-1 flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeCondition(condition.id)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
