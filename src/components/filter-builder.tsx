@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { Button } from "@/components/ui/button"
-import { PlusCircle, X, Save, Filter, Tag, Loader2 } from "lucide-react"
+import { PlusCircle, X, Save, Filter, Tag } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -16,7 +16,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { ColumnMetadata } from "../types/types"
@@ -29,13 +28,13 @@ interface FilterCondition {
   column: string
   operator: string
   value: string
-  selectedValues?: string[] // Add this for multi-select support
+  selectedValues?: string[]
 }
 
 interface FilterBuilderProps {
   columns: ColumnMetadata[]
+  onApplyFilter: (filterString: string) => { success: boolean; message: string }
   rows: unknown[][]
-  onApplyFilter: (filterString: string) => Promise<{ success: boolean; message: string }>
 }
 
 const OPERATORS = [
@@ -50,7 +49,7 @@ const OPERATORS = [
   { label: "not in", value: "not in", symbol: "not in" },
 ]
 
-export function FilterBuilder({ columns, rows, onApplyFilter }: FilterBuilderProps) {
+export function FilterBuilder({ columns, onApplyFilter, rows }: FilterBuilderProps) {
   // Client-side only states
   const [conditions, setConditions] = React.useState<FilterCondition[]>([])
   const [savedFilters, setSavedFilters] = React.useState<{ name: string; conditions: FilterCondition[] }[]>([])
@@ -58,8 +57,6 @@ export function FilterBuilder({ columns, rows, onApplyFilter }: FilterBuilderPro
   const [filterName, setFilterName] = React.useState("")
   const [showBuilder, setShowBuilder] = React.useState(false)
   const [showColumnNames, setShowColumnNames] = React.useState(false)
-  const [isApplying, setIsApplying] = React.useState(false)
-  const [message, setMessage] = React.useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Use refs for tracking initialization and updates
   const isInitialized = React.useRef(false)
@@ -72,8 +69,8 @@ export function FilterBuilder({ columns, rows, onApplyFilter }: FilterBuilderPro
     isInitialized.current = true
   }, [])
 
-  // Use the hook with debug enabled when showBuilder is true
-  const uniqueValues = useUniqueValues(columns, rows, { debug: false })
+  // Use the hook
+  const uniqueValues = useUniqueValues(columns, rows, { maxUniqueValues: 100 })
 
   // Track rows changes
   React.useEffect(() => {
@@ -224,29 +221,11 @@ export function FilterBuilder({ columns, rows, onApplyFilter }: FilterBuilderPro
     return undefined
   }, [uniqueValues])
 
-  const handleApplyFilter = async () => {
-    if (conditions.length === 0) {
-      setMessage({ type: 'error', text: 'Please add at least one condition' })
-      return
-    }
-
-    setIsApplying(true)
-    try {
-      const filterString = buildFilterString(conditions)
-      const result = await onApplyFilter(filterString)
-      setMessage({ type: result.success ? 'success' : 'error', text: result.message })
-      if (result.success) {
-        setShowBuilder(false)
-      }
-    } catch (error) {
-      setMessage({ 
-        type: 'error', 
-        text: error instanceof Error ? error.message : 'Failed to apply filter' 
-      })
-    } finally {
-      setIsApplying(false)
-    }
-  }
+  const applyFilter = React.useCallback(() => {
+    const filterString = buildFilterString(conditions)
+    onApplyFilter(filterString)
+    setShowBuilder(false)
+  }, [buildFilterString, conditions, onApplyFilter])
 
   const saveFilter = React.useCallback(() => {
     if (!filterName.trim()) return
@@ -496,18 +475,11 @@ export function FilterBuilder({ columns, rows, onApplyFilter }: FilterBuilderPro
                     Cancel
                   </Button>
                   <Button
-                    type="submit"
-                    onClick={handleApplyFilter}
-                    disabled={isApplying || conditions.length === 0}
+                    size="sm"
+                    onClick={applyFilter}
+                    disabled={conditions.length === 0}
                   >
-                    {isApplying ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Applying
-                      </>
-                    ) : (
-                      'Apply Filter'
-                    )}
+                    Apply Filter
                   </Button>
                 </div>
               </div>

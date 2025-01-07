@@ -22,7 +22,6 @@ import { FolderData, FileData, SortConfig, ColumnMetadata, DefineXmlMetadata, De
 import { FileTooltip } from './file-tooltip'
 import { FolderTooltip } from './folder-tooltip'
 import { Progress } from "@/components/ui/progress"
-import oboe from 'oboe'
 import { RowLimitDialog } from './row-limit-dialog'
 import { FilterBuilder } from './filter-builder'
 
@@ -37,8 +36,6 @@ declare global {
 }
 
 const ROWS_PER_PAGE = 30
-const CHUNK_SIZE = 1000 // Number of rows to load at once
-const LARGE_FILE_THRESHOLD = 100 * 1024 * 1024 // 100MB
 const MAX_ROWS_ALLOWED = 460000 // Maximum number of rows allowed
 
 async function parseDefineXml(xmlText: string) {
@@ -148,6 +145,147 @@ export default function JsonViewer() {
     return Array.isArray(fileRows) ? fileRows : []
   }, [selectedFileData, viewerState.isLoadingRows])
 
+  // Update loadFileRows to handle loading state properly
+  const loadFileRows = useCallback(async (fileData: FileData) => {
+    const recordCount = Number(fileData.content.records || 0)
+    
+    if (recordCount > MAX_ROWS_ALLOWED) {
+      setRowLimitInfo({ rowCount: recordCount, maxRows: MAX_ROWS_ALLOWED })
+      setShowRowLimitDialog(true)
+      setViewerState(prev => ({ ...prev, isLoadingRows: false }))
+      return
+    }
+
+    try {
+      setViewerState(prev => ({ ...prev, isLoadingRows: true }))
+      // Start loading
+      setProgress({
+        total: 100,
+        current: 1,
+        message: `Reading file: ${fileData.name}`
+      })
+
+      // Read file in chunks to show progress
+      const chunkSize = 1024 * 1024 // 1MB chunks
+      const fileSize = fileData.rawFile.size
+      let loadedSize = 0
+      let content = ''
+
+      // Read file in chunks
+      while (loadedSize < fileSize) {
+        const blob = fileData.rawFile.slice(loadedSize, loadedSize + chunkSize)
+        const chunk = await blob.text()
+        content += chunk
+        loadedSize += chunk.length
+
+        // Calculate exact reading progress (0-50%)
+        const readingProgress = Math.round((loadedSize / fileSize) * 50)
+        setProgress(prev => prev ? {
+          ...prev,
+          current: readingProgress,
+          message: `Reading file: ${readingProgress}%`
+        } : null)
+
+        // Small delay to allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+
+      // Update progress for parsing phase (50-75%)
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 50,
+        message: 'Parsing data...'
+      } : null)
+
+      let rows: unknown[][] = []
+      
+      // Check if it's NDJSON by looking at the file extension
+      if (fileData.name.endsWith('.ndjson')) {
+        const lines = content.split(/\r?\n/).filter(line => line.trim())
+        const totalLines = lines.length - 1 // Exclude metadata line
+        let processedLines = 0
+
+        // Skip the first line (metadata) and parse each subsequent line
+        rows = []
+        for (const line of lines.slice(1)) {
+          try {
+            rows.push(JSON.parse(line))
+          } catch {
+            rows.push([])
+          }
+          processedLines++
+
+          // Update progress for NDJSON parsing (50-75%)
+          if (processedLines % 1000 === 0) {
+            const parsingProgress = 50 + Math.round((processedLines / totalLines) * 25)
+            setProgress(prev => prev ? {
+              ...prev,
+              current: parsingProgress,
+              message: `Processing NDJSON data: ${Math.round((processedLines / totalLines) * 100)}%`
+            } : null)
+            await new Promise(resolve => setTimeout(resolve, 0))
+          }
+        }
+      } else {
+        // Regular JSON parsing
+        setProgress(prev => prev ? {
+          ...prev,
+          current: 60,
+          message: 'Processing JSON data...'
+        } : null)
+        const parsedContent = JSON.parse(content)
+        rows = parsedContent.rows || []
+      }
+
+      // Update progress for final processing (75-90%)
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 75,
+        message: 'Preparing data for display...'
+      } : null)
+
+      // Update both the file content and viewer state
+      fileData.content.rows = rows // Store the rows in the file content
+      setViewerState(prev => ({
+        ...prev,
+        filteredRows: rows,
+        totalRowCount: rows.length,
+        isLoadingRows: false, // Clear loading state after rows are loaded
+        activeFilter: '', // Reset active filter when loading new file
+        currentPage: 1 // Reset to first page
+      }))
+
+      // Final UI update (95-100%)
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 95,
+        message: 'Updating display...'
+      } : null)
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // Complete
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 100,
+        message: 'Complete'
+      } : null)
+
+      // Clear progress after a short delay
+      setTimeout(() => setProgress(null), 500)
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      setViewerState(prev => ({ ...prev, isLoadingRows: false }))
+      setProgress({
+        total: 100,
+        current: 100,
+        message: `Error loading file: ${errorMessage}`
+      })
+      setTimeout(() => setProgress(null), 2000)
+    }
+  }, [])
+
   const resetState = useCallback(() => {
     setViewerState(prev => ({
       ...prev,
@@ -170,18 +308,18 @@ export default function JsonViewer() {
     }
   }, [subfolders, selectedFolder])
 
-  // Update effect for folder change
+  // Update effect for folder change with proper dependency
   useEffect(() => {
     const currentFolder = subfolders.find(folder => folder.path === selectedFolder)
     if (currentFolder && currentFolder.files.length > 0) {
       const firstFile = currentFolder.files[0]
       setSelectedFile(firstFile.name)
-      loadFileRows(firstFile) // Load the first file's rows when folder changes
+      loadFileRows(firstFile)
     } else {
       setSelectedFile('')
     }
     resetState()
-  }, [selectedFolder, subfolders, resetState])
+  }, [selectedFolder, subfolders, resetState, loadFileRows])
 
   // Update effect for column order
   useEffect(() => {
@@ -394,146 +532,6 @@ export default function JsonViewer() {
     const currentRows = sortedRows.slice(startIndex, endIndex)
     return { totalPages, currentRows, startIndex, endIndex }
   }, [sortedRows, viewerState.currentPage])
-
-  // Update loadFileRows to handle loading state properly
-  const loadFileRows = useCallback(async (fileData: FileData) => {
-    const recordCount = Number(fileData.content.records || 0)
-    
-    if (recordCount > MAX_ROWS_ALLOWED) {
-      setRowLimitInfo({ rowCount: recordCount, maxRows: MAX_ROWS_ALLOWED })
-      setShowRowLimitDialog(true)
-      setViewerState(prev => ({ ...prev, isLoadingRows: false }))
-      return
-    }
-
-    try {
-      setViewerState(prev => ({ ...prev, isLoadingRows: true }))
-      // Start loading
-      setProgress({
-        total: 100,
-        current: 1,
-        message: `Reading file: ${fileData.name}`
-      })
-
-      // Read file in chunks to show progress
-      const chunkSize = 1024 * 1024 // 1MB chunks
-      const fileSize = fileData.rawFile.size
-      let loadedSize = 0
-      let content = ''
-
-      // Read file in chunks
-      while (loadedSize < fileSize) {
-        const blob = fileData.rawFile.slice(loadedSize, loadedSize + chunkSize)
-        const chunk = await blob.text()
-        content += chunk
-        loadedSize += chunk.length
-
-        // Calculate exact reading progress (0-50%)
-        const readingProgress = Math.round((loadedSize / fileSize) * 50)
-        setProgress(prev => prev ? {
-          ...prev,
-          current: readingProgress,
-          message: `Reading file: ${readingProgress}%`
-        } : null)
-
-        // Small delay to allow UI to update
-        await new Promise(resolve => setTimeout(resolve, 0))
-      }
-
-      // Update progress for parsing phase (50-75%)
-      setProgress(prev => prev ? {
-        ...prev,
-        current: 50,
-        message: 'Parsing data...'
-      } : null)
-
-      let rows: unknown[][] = []
-      
-      // Check if it's NDJSON by looking at the file extension
-      if (fileData.name.endsWith('.ndjson')) {
-        const lines = content.split(/\r?\n/).filter(line => line.trim())
-        const totalLines = lines.length - 1 // Exclude metadata line
-        let processedLines = 0
-
-        // Skip the first line (metadata) and parse each subsequent line
-        rows = []
-        for (const line of lines.slice(1)) {
-          try {
-            rows.push(JSON.parse(line))
-          } catch {
-            rows.push([])
-          }
-          processedLines++
-
-          // Update progress for NDJSON parsing (50-75%)
-          if (processedLines % 1000 === 0) {
-            const parsingProgress = 50 + Math.round((processedLines / totalLines) * 25)
-            setProgress(prev => prev ? {
-              ...prev,
-              current: parsingProgress,
-              message: `Processing NDJSON data: ${Math.round((processedLines / totalLines) * 100)}%`
-            } : null)
-            await new Promise(resolve => setTimeout(resolve, 0))
-          }
-        }
-      } else {
-        // Regular JSON parsing
-        setProgress(prev => prev ? {
-          ...prev,
-          current: 60,
-          message: 'Processing JSON data...'
-        } : null)
-        const parsedContent = JSON.parse(content)
-        rows = parsedContent.rows || []
-      }
-
-      // Update progress for final processing (75-90%)
-      setProgress(prev => prev ? {
-        ...prev,
-        current: 75,
-        message: 'Preparing data for display...'
-      } : null)
-
-      // Update both the file content and viewer state
-      fileData.content.rows = rows // Store the rows in the file content
-      setViewerState(prev => ({
-        ...prev,
-        filteredRows: rows,
-        totalRowCount: rows.length,
-        isLoadingRows: false, // Clear loading state after rows are loaded
-        activeFilter: '', // Reset active filter when loading new file
-        currentPage: 1 // Reset to first page
-      }))
-
-      // Final UI update (95-100%)
-      setProgress(prev => prev ? {
-        ...prev,
-        current: 95,
-        message: 'Updating display...'
-      } : null)
-
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      // Complete
-      setProgress(prev => prev ? {
-        ...prev,
-        current: 100,
-        message: 'Complete'
-      } : null)
-
-      // Clear progress after a short delay
-      setTimeout(() => setProgress(null), 500)
-
-    } catch (error) {
-      setViewerState(prev => ({ ...prev, isLoadingRows: false }))
-      setProgress({
-        total: 100,
-        current: 100,
-        message: 'Error loading file. Please try again.'
-      })
-      setTimeout(() => setProgress(null), 2000)
-    }
-  }, [])
 
   // Update handleFileChange to handle loading state
   const handleFileChange = useCallback((fileName: string) => {

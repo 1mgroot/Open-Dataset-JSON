@@ -12,7 +12,6 @@ interface UniqueValuesMap {
 }
 
 interface UseUniqueValuesOptions {
-  debug?: boolean;
   maxUniqueValues?: number;
 }
 
@@ -21,7 +20,7 @@ export function useUniqueValues(
   rows: unknown[][],
   options: UseUniqueValuesOptions = {}
 ) {
-  const { debug = false, maxUniqueValues = 100 } = options
+  const { maxUniqueValues = 100 } = options
 
   const uniqueValuesMap = useMemo(() => {
     const map: UniqueValuesMap = {}
