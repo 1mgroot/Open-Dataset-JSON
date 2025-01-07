@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { Button } from "@/components/ui/button"
-import { PlusCircle, X, Save, Filter, Tag, ChevronDown } from "lucide-react"
+import { PlusCircle, X, Save, Filter, Tag } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -25,11 +25,6 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { useUniqueValues } from "@/hooks/useUniqueValues"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-
-interface UniqueValue {
-  value: string;
-  frequency: number;
-}
 
 interface FilterCondition {
   id: string
