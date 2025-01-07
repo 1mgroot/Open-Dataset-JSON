@@ -34,9 +34,9 @@ interface TopLevelMetadata {
 }
 
 export function FileTooltip({ children, file }: FileTooltipProps) {
-  const content = file.content as { columns?: { name: string }[]; rows?: unknown[][] } & TopLevelMetadata
+  const content = file.content as { columns?: { name: string }[]; records?: number } & TopLevelMetadata
   const columnCount = content.columns?.length ?? 0
-  const rowCount = content.rows?.length ?? 0
+  const rowCount = content.records ?? 0
 
   // Order metadata fields according to the specification
   const orderedMetadata = [
