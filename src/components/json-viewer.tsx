@@ -102,6 +102,8 @@ export default function JsonViewer() {
   const [showRowLimitDialog, setShowRowLimitDialog] = useState(false)
   const [rowLimitInfo, setRowLimitInfo] = useState<{ rowCount: number, maxRows: number } | null>(null)
   const [progress, setProgress] = useState<ProgressState | null>(null)
+  const [defineXmlMetadata, setDefineXmlMetadata] = useState<Map<string, DefineXmlMetadata> | null>(null)
+  const [defineXmlFileMetadata, setDefineXmlFileMetadata] = useState<DefineXmlFileMetadata | null>(null)
 
   // Combine related state into a single object to prevent partial updates
   const [viewerState, setViewerState] = useState<FileViewerState>({
@@ -117,6 +119,7 @@ export default function JsonViewer() {
   })
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
   // Memoize selected folder and file data
   const selectedFolderData = useMemo(() => 
@@ -784,6 +787,28 @@ export default function JsonViewer() {
     const files = e.target.files
     if (!files) return
 
+    // Check if there are only XML files
+    const onlyXmlFiles = Array.from(files).every(file => file.name.toLowerCase().endsWith('.xml'))
+    
+    if (onlyXmlFiles) {
+      // Process XML files directly without showing format dialog
+      for (const file of Array.from(files)) {
+        if (file.name.toLowerCase() === 'define.xml') {
+          try {
+            const content = await file.text()
+            const { metadata, fileMetadata } = await parseDefineXml(content)
+            // Store the metadata for later use
+            setDefineXmlMetadata(metadata)
+            setDefineXmlFileMetadata(fileMetadata)
+          } catch (error) {
+            console.error('Error parsing define.xml:', error)
+          }
+        }
+      }
+      return
+    }
+
+    // For JSON/NDJSON files, show format dialog as before
     setPendingFiles(files)
     setShowFormatDialog(true)
   }
@@ -1195,7 +1220,7 @@ export default function JsonViewer() {
             </Tabs>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">
-              <div className="text-center">
+              <div className="text-center space-y-6">
                 <div className="mb-4">
                   <svg
                     className="mx-auto h-12 w-12"
@@ -1211,13 +1236,54 @@ export default function JsonViewer() {
                     />
                   </svg>
                 </div>
-                <h3 className="text-lg font-semibold">Drag a folder here</h3>
-                <p 
-                  className="text-sm cursor-pointer hover:text-primary"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  or click to browse
-                </p>
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Upload your data</h3>
+                  <div className="flex items-center justify-center gap-4">
+                    <Button
+                      variant="outline"
+                      onClick={() => folderInputRef.current?.click()}
+                      className="min-w-32"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                        />
+                      </svg>
+                      Upload Folder
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="min-w-32"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                      Upload Files
+                    </Button>
+                  </div>
+                  <p className="text-sm mt-2">
+                    or drag files/folder here
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -1259,11 +1325,19 @@ export default function JsonViewer() {
 
       <input
         type="file"
-        ref={fileInputRef}
+        ref={folderInputRef}
         onChange={handleFileSelect}
         style={{ display: 'none' }}
         // @ts-expect-error - DragEvent types are not fully compatible
         webkitdirectory=""
+      />
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileSelect}
+        style={{ display: 'none' }}
+        multiple
+        accept=".json,.ndjson,.xml"
       />
 
       <RowLimitDialog 
