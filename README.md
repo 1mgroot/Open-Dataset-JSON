@@ -1,10 +1,18 @@
-# Zhen Dataset-JSON Viewer
+# Open Dataset-JSON
 
 A modern, high-performance web application for viewing and analyzing dataset JSON files. Built with Next.js and TypeScript, featuring an intuitive user interface and powerful data handling capabilities.
 
 🔗 **[Try it now on Vercel](https://lightweightdatasetjsonviewer.vercel.app/)**
 
 Don't want to install? Use our live version directly! The application is deployed on Vercel and ready to use in your browser. No installation required - just visit the link above and start analyzing your datasets.
+
+## Privacy & Security
+
+🔒 **Client-Side Only Processing**
+- All data processing happens in your browser
+- No data is ever uploaded to any server
+- No user information or files are stored
+- Safe for sensitive data analysis
 
 ## Features
 
@@ -16,7 +24,7 @@ Don't want to install? Use our live version directly! The application is deploye
 - 🗂️ Multi-file support with tab-based navigation
 - 💾 Define.xml metadata integration
 
-### Data Visualization
+### Data Visualization & Analysis
 - 📊 Interactive data table with:
   - Multi-column sorting
   - Column visibility toggle
@@ -25,6 +33,11 @@ Don't want to install? Use our live version directly! The application is deploye
   - Responsive layout
 - 🏷️ Dynamic column name/label switching
 - 📱 Mobile-friendly design
+- 📈 Dataset Frequency Overview:
+  - Visual representation of unique values
+  - Frequency counts for each value
+  - Numeric vs text data identification
+  - Quick value distribution analysis
 
 ### Data Management
 - 🔍 Advanced filtering capabilities:
@@ -32,7 +45,9 @@ Don't want to install? Use our live version directly! The application is deploye
   - Complex filter builder with AND/OR operations
   - Support for multiple operators (=, !=, >, <, >=, <=, contains, in, not in)
   - Filter saving functionality
+  - Real-time filter string preview with copy feature
 - ⚡ Efficient data loading with progress indicators
+- 🔄 Auto-clearing filters when conditions are removed
 
 ## Getting Started
 
@@ -72,6 +87,7 @@ yarn dev
    - Click "Upload Files" to select individual JSON/NDJSON files
    - Click "Upload Folder" to select a folder containing JSON/NDJSON files
    - Or drag and drop files/folders directly onto the interface
+   - All processing is done client-side for data privacy
 
 2. **Format Selection**:
    - Choose between JSON or NDJSON format
@@ -85,16 +101,25 @@ yarn dev
    - Reorder columns via drag and drop
    - Sort data by clicking column headers (multi-column sort supported)
 
-2. **Filtering Data**:
+2. **Analyzing Data**:
+   - Use the Dataset Frequency Overview to understand value distributions
+   - View frequency counts and percentages for each unique value
+   - Identify numeric vs text columns
+   - Copy frequency data for further analysis
+
+3. **Filtering Data**:
    - Use the simple filter input for quick searches
    - Use the Filter Builder for complex conditions
    - Combine multiple conditions with AND/OR operators
    - Save frequently used filters
+   - Preview and copy generated filter strings
+   - Filters auto-clear when all conditions are removed
 
-3. **Performance Features**:
+4. **Performance Features**:
    - Lazy loading for large datasets
    - Progress indicators for long operations
    - Row limit management to prevent browser overload
+   - Client-side processing for data privacy
 
 ## Technical Stack
 
