@@ -3,7 +3,7 @@
 import { useMemo } from 'react'
 import { ColumnMetadata } from '../types/types'
 
-interface UniqueValue {
+export interface UniqueValue {
   value: string;
   frequency: number;
 }

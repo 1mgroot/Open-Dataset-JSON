@@ -25,7 +25,7 @@ import { Progress } from "@/components/ui/progress"
 import { RowLimitDialog } from './row-limit-dialog'
 import { FilterBuilder } from './filter-builder'
 import { UniqueValuesTree } from './unique-values-tree'
-import { useUniqueValues } from '../hooks/useUniqueValues'
+import { useUniqueValues, UniqueValue } from '../hooks/useUniqueValues'
 
 declare global {
   interface Performance {
@@ -983,7 +983,7 @@ export default function JsonViewer() {
   // Add useUniqueValues hook
   const uniqueValues = useUniqueValues(columns, rows)
   const uniqueValuesMap = useMemo(() => {
-    const map: { [key: string]: { values: string[], isNumeric: boolean, exceedsLimit: boolean } } = {}
+    const map: { [key: string]: { values: UniqueValue[]; isNumeric: boolean; exceedsLimit: boolean } } = {}
     columns.forEach(col => {
       map[col.name] = {
         values: uniqueValues.getValues(col.name),
