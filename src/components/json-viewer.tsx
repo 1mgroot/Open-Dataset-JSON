@@ -23,8 +23,23 @@ import { FileTooltip } from './file-tooltip'
 import { FolderTooltip } from './folder-tooltip'
 import { Progress } from "@/components/ui/progress"
 import oboe from 'oboe'
+import { RowLimitDialog } from './row-limit-dialog'
+import { FilterBuilder } from './filter-builder'
+
+declare global {
+  interface Performance {
+    memory?: {
+      jsHeapSizeLimit: number;
+      totalJSHeapSize: number;
+      usedJSHeapSize: number;
+    }
+  }
+}
 
 const ROWS_PER_PAGE = 30
+const CHUNK_SIZE = 1000 // Number of rows to load at once
+const LARGE_FILE_THRESHOLD = 100 * 1024 * 1024 // 100MB
+const MAX_ROWS_ALLOWED = 460000 // Maximum number of rows allowed
 
 async function parseDefineXml(xmlText: string) {
   const parser = new DOMParser()
@@ -57,60 +72,546 @@ async function parseDefineXml(xmlText: string) {
   return { metadata, fileMetadata }
 }
 
+// Combine related state into a single object
+interface FileViewerState {
+  currentPage: number;
+  sortConfig: SortConfig[];
+  activeFilter: string;
+  filteredRows: unknown[][];
+  columnOrder: string[];
+  visibleColumns: string[];
+  loadingProgress: number;
+  isLoadingRows: boolean;
+  totalRowCount: number;
+}
+
+// Add new type for progress state
+interface ProgressState {
+  total: number;
+  current: number;
+  message: string;
+}
+
 export default function JsonViewer() {
   const [subfolders, setSubfolders] = useState<FolderData[]>([])
   const [selectedFolder, setSelectedFolder] = useState<string>('')
   const [selectedFile, setSelectedFile] = useState<string>('')
-  const [currentPage, setCurrentPage] = useState(1)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [sortConfig, setSortConfig] = useState<SortConfig[]>([])
   const [showColumnNames, setShowColumnNames] = useState(false)
-  const [filteredRows, setFilteredRows] = useState<unknown[][]>([])
-  const [activeFilter, setActiveFilter] = useState<string>('')
-  const [columnOrder, setColumnOrder] = useState<string[]>([])
-  const [visibleColumns, setVisibleColumns] = useState<string[]>([])
   const [showFormatDialog, setShowFormatDialog] = useState(false)
   const [selectedFormat, setSelectedFormat] = useState<'json' | 'ndjson'>('json')
   const [pendingFiles, setPendingFiles] = useState<FileList | null>(null)
   const [pendingDirEntry, setPendingDirEntry] = useState<FileSystemDirectoryEntry | null>(null)
-  const [loadingProgress, setLoadingProgress] = useState<number>(0)
-  const [isLoadingRows, setIsLoadingRows] = useState(false)
+  const [showRowLimitDialog, setShowRowLimitDialog] = useState(false)
+  const [rowLimitInfo, setRowLimitInfo] = useState<{ rowCount: number, maxRows: number } | null>(null)
+  const [progress, setProgress] = useState<ProgressState | null>(null)
+
+  // Combine related state into a single object to prevent partial updates
+  const [viewerState, setViewerState] = useState<FileViewerState>({
+    currentPage: 1,
+    sortConfig: [],
+    activeFilter: '',
+    filteredRows: [],
+    columnOrder: [],
+    visibleColumns: [],
+    loadingProgress: 0,
+    isLoadingRows: false,
+    totalRowCount: 0
+  })
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const resetState = () => {
-    setCurrentPage(1)
-    setSortConfig([])
-    setActiveFilter('')
-    setFilteredRows([])
-  }
+  // Memoize selected folder and file data
+  const selectedFolderData = useMemo(() => 
+    subfolders.find(f => f.path === selectedFolder),
+    [subfolders, selectedFolder]
+  )
 
+  const selectedFileData = useMemo(() => 
+    selectedFolderData?.files.find(f => f.name === selectedFile),
+    [selectedFolderData, selectedFile]
+  )
+
+  // Memoize columns
+  const columns = useMemo(() => 
+    (selectedFileData?.content as { columns?: ColumnMetadata[] })?.columns || [],
+    [selectedFileData]
+  )
+
+  // Memoize rows with loading state
+  const rows = useMemo(() => {
+    if (viewerState.isLoadingRows) {
+      return []
+    }
+    
+    const fileRows = (selectedFileData?.content as { rows?: unknown[][] })?.rows
+    return Array.isArray(fileRows) ? fileRows : []
+  }, [selectedFileData, viewerState.isLoadingRows])
+
+  const resetState = useCallback(() => {
+    setViewerState(prev => ({
+      ...prev,
+      currentPage: 1,
+      sortConfig: [],
+      activeFilter: '',
+      filteredRows: [],
+      isLoadingRows: true // Set loading state when resetting
+    }))
+  }, [])
+
+  // Update effect for initial folder selection
   useEffect(() => {
     if (subfolders.length > 0 && !selectedFolder) {
-      const firstFolder = subfolders[0];
-      setSelectedFolder(firstFolder.path);
+      const firstFolder = subfolders[0]
+      setSelectedFolder(firstFolder.path)
       if (firstFolder.files.length > 0) {
-        setSelectedFile(firstFolder.files[0].name);
+        setSelectedFile(firstFolder.files[0].name)
       }
     }
-  }, [subfolders, selectedFolder]);
+  }, [subfolders, selectedFolder])
 
+  // Update effect for folder change
   useEffect(() => {
-    const currentFolder = subfolders.find(folder => folder.path === selectedFolder);
+    const currentFolder = subfolders.find(folder => folder.path === selectedFolder)
     if (currentFolder && currentFolder.files.length > 0) {
-      const firstFile = currentFolder.files[0].name;
-      setSelectedFile(firstFile);
+      const firstFile = currentFolder.files[0]
+      setSelectedFile(firstFile.name)
+      loadFileRows(firstFile) // Load the first file's rows when folder changes
     } else {
-      setSelectedFile('');
+      setSelectedFile('')
     }
-    resetState();
-  }, [selectedFolder, subfolders]);
+    resetState()
+  }, [selectedFolder, subfolders, resetState])
+
+  // Update effect for column order
+  useEffect(() => {
+    const fileColumns = (selectedFileData?.content as { columns?: ColumnMetadata[] })?.columns
+    if (Array.isArray(fileColumns) && fileColumns.length > 0) {
+      const newColumnOrder = fileColumns.map((col: ColumnMetadata) => col.name)
+      setViewerState(prev => ({
+        ...prev,
+        columnOrder: newColumnOrder,
+        visibleColumns: newColumnOrder
+      }))
+    }
+  }, [selectedFileData])
+
+  // Memoize filter function
+  const applyFilter = useCallback((filterString: string) => {
+    if (!selectedFileData) return { success: false, message: "No file selected" }
+    
+    // Get the current rows from the file content
+    const currentRows = (selectedFileData.content.rows as unknown[][]) || []
+    
+    // If filter is empty, show all rows
+    if (!filterString.trim()) {
+      setViewerState(prev => ({ 
+        ...prev, 
+        filteredRows: currentRows,
+        activeFilter: '',
+        currentPage: 1
+      }))
+      return { success: true, message: `Filter cleared. Showing all ${currentRows.length.toLocaleString()} rows` }
+    }
+
+    try {
+      const fileColumns = selectedFileData.content.columns as ColumnMetadata[]
+      let processedFilter = filterString
+        .replace(/\band\b/gi, '&&')
+        .replace(/\bor\b/gi, '||')
+        // Support SAS operators
+        .replace(/\beq\b/gi, '===')
+        .replace(/\bne\b/gi, '!==')
+        .replace(/\bgt\b/gi, '>')
+        .replace(/\blt\b/gi, '<')
+        .replace(/\bge\b/gi, '>=')
+        .replace(/\ble\b/gi, '<=')
+        .replace(/\bcontains\b/gi, 'includes')
+
+      // Handle IN and NOT IN operators
+      processedFilter = processedFilter.replace(
+        /([a-zA-Z_][a-zA-Z0-9_]*)\s*(in|not in)\s*\((.*?)\)/gi,
+        (match, colName, operator, values) => {
+          const columnIndex = fileColumns.findIndex(col => col.name === colName)
+          if (columnIndex === -1) {
+            throw new Error(`Unknown column: ${colName}`)
+          }
+
+          // Split values and clean them
+          const valueList = values
+            .split(',')
+            .map((v: string) => v.trim())
+            .filter((v: string): boolean => Boolean(v))
+            .map((v: string) => v.replace(/^["']|["']$/g, '')) // Remove quotes
+
+          if (operator.toLowerCase() === 'in') {
+            return `[${valueList.map((v: string) => `"${v}"`).join(',')}].includes(String(row[${columnIndex}]))`
+          } else { // not in
+            return `![${valueList.map((v: string) => `"${v}"`).join(',')}].includes(String(row[${columnIndex}]))`
+          }
+        }
+      )
+
+      // Handle other operators
+      processedFilter = processedFilter.replace(
+        /([a-zA-Z_][a-zA-Z0-9_]*)\s*(===|!==|>|<|>=|<=|=|!=|includes)\s*(["']?)([^"'\s]+)(["']?)/g,
+        (match, colName, operator, quote1, value, quote2) => {
+          const columnIndex = fileColumns.findIndex(col => col.name === colName)
+          if (columnIndex === -1) {
+            throw new Error(`Unknown column: ${colName}`)
+          }
+          const processedValue = quote1 || quote2 ? `${quote1}${value}${quote2}` : value
+          let jsOperator = operator
+          // Convert = to === and != to !==
+          if (operator === '=') jsOperator = '==='
+          if (operator === '!=') jsOperator = '!=='
+          // Handle 'includes' operator
+          if (operator === 'includes') {
+            return `String(row[${columnIndex}]).includes(${processedValue})`
+          }
+          return `String(row[${columnIndex}]) ${jsOperator} ${processedValue}`
+        }
+      )
+
+      console.group('Filter Processing')
+      console.log('Original filter:', filterString)
+      console.log('Processed filter:', processedFilter)
+      console.groupEnd()
+
+      const filterFunction = new Function('row', `
+        try {
+          return ${processedFilter}
+        } catch (error) {
+          console.error('Filter evaluation error:', error)
+          return false
+        }
+      `)
+
+      setProgress({
+        total: currentRows.length,
+        current: 0,
+        message: 'Starting filter...'
+      })
+
+      // Process rows in chunks to avoid blocking the UI
+      const chunkSize = 5000
+      const filtered: unknown[][] = []
+      let processedCount = 0
+
+      const processChunk = () => {
+        const chunk = currentRows.slice(processedCount, processedCount + chunkSize)
+        const matchedRows = chunk.filter((row: unknown[]) => {
+          try {
+            return filterFunction(row)
+          } catch {
+            return false
+          }
+        })
+        filtered.push(...matchedRows)
+        processedCount += chunk.length
+
+        const progress = Math.round((processedCount / currentRows.length) * 100)
+        setProgress(prev => prev ? {
+          ...prev,
+          current: progress,
+          message: `Processing rows: ${progress}% (${filtered.length.toLocaleString()} matches found)`
+        } : null)
+
+        setViewerState(prev => ({ 
+          ...prev, 
+          filteredRows: filtered,
+          activeFilter: filterString,
+          currentPage: 1
+        }))
+
+        if (processedCount < currentRows.length) {
+          setTimeout(processChunk, 0) // Continue with next chunk
+        } else {
+          setProgress(null) // Clear progress immediately when done
+          // Return final result message through the filter callback
+          return {
+            success: true,
+            message: filtered.length > 0
+              ? `Found ${filtered.length.toLocaleString()} matching rows out of ${currentRows.length.toLocaleString()} total rows`
+              : 'No matching rows found'
+          }
+        }
+      }
+
+      const result = processChunk() // Start processing
+      if (result) return result // Return result if processing completed synchronously
+
+      return {
+        success: true,
+        message: 'Processing rows...'
+      }
+    } catch (error) {
+      console.error('Filter error:', error)
+      setProgress(null)
+      setViewerState(prev => ({ 
+        ...prev, 
+        filteredRows: currentRows,
+        activeFilter: '',
+        currentPage: 1
+      }))
+      return { 
+        success: false, 
+        message: error instanceof Error ? error.message : "Invalid filter criteria. Please check your input." 
+      }
+    }
+  }, [selectedFileData])
+
+  // Update effect for filter
+  useEffect(() => {
+    if (rows.length > 0 && !viewerState.isLoadingRows) {
+      applyFilter(viewerState.activeFilter)
+    }
+  }, [rows, viewerState.activeFilter, viewerState.isLoadingRows, applyFilter])
+
+  // Memoize sorted rows
+  const sortedRows = useMemo(() => {
+    if (viewerState.sortConfig.length === 0) return viewerState.filteredRows
+
+    return [...viewerState.filteredRows].sort((a: unknown[], b: unknown[]) => {
+      for (const sort of viewerState.sortConfig) {
+        const index = viewerState.columnOrder.indexOf(sort.key)
+        if (index === -1) continue
+
+        const aVal = String(a[index] ?? '')
+        const bVal = String(b[index] ?? '')
+        if (aVal < bVal) return sort.direction === 'asc' ? -1 : 1
+        if (aVal > bVal) return sort.direction === 'asc' ? 1 : -1
+      }
+      return 0
+    })
+  }, [viewerState.filteredRows, viewerState.columnOrder, viewerState.sortConfig])
+
+  // Memoize pagination values
+  const paginationValues = useMemo(() => {
+    const totalPages = Math.ceil(sortedRows.length / ROWS_PER_PAGE)
+    const startIndex = (viewerState.currentPage - 1) * ROWS_PER_PAGE
+    const endIndex = startIndex + ROWS_PER_PAGE
+    const currentRows = sortedRows.slice(startIndex, endIndex)
+    return { totalPages, currentRows, startIndex, endIndex }
+  }, [sortedRows, viewerState.currentPage])
+
+  // Update loadFileRows to handle loading state properly
+  const loadFileRows = useCallback(async (fileData: FileData) => {
+    const recordCount = Number(fileData.content.records || 0)
+    
+    if (recordCount > MAX_ROWS_ALLOWED) {
+      setRowLimitInfo({ rowCount: recordCount, maxRows: MAX_ROWS_ALLOWED })
+      setShowRowLimitDialog(true)
+      setViewerState(prev => ({ ...prev, isLoadingRows: false }))
+      return
+    }
+
+    try {
+      setViewerState(prev => ({ ...prev, isLoadingRows: true }))
+      // Start loading
+      setProgress({
+        total: 100,
+        current: 1,
+        message: `Reading file: ${fileData.name}`
+      })
+
+      // Read file in chunks to show progress
+      const chunkSize = 1024 * 1024 // 1MB chunks
+      const fileSize = fileData.rawFile.size
+      let loadedSize = 0
+      let content = ''
+
+      // Read file in chunks
+      while (loadedSize < fileSize) {
+        const blob = fileData.rawFile.slice(loadedSize, loadedSize + chunkSize)
+        const chunk = await blob.text()
+        content += chunk
+        loadedSize += chunk.length
+
+        // Calculate exact reading progress (0-50%)
+        const readingProgress = Math.round((loadedSize / fileSize) * 50)
+        setProgress(prev => prev ? {
+          ...prev,
+          current: readingProgress,
+          message: `Reading file: ${readingProgress}%`
+        } : null)
+
+        // Small delay to allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+
+      // Update progress for parsing phase (50-75%)
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 50,
+        message: 'Parsing data...'
+      } : null)
+
+      let rows: unknown[][] = []
+      
+      // Check if it's NDJSON by looking at the file extension
+      if (fileData.name.endsWith('.ndjson')) {
+        const lines = content.split(/\r?\n/).filter(line => line.trim())
+        const totalLines = lines.length - 1 // Exclude metadata line
+        let processedLines = 0
+
+        // Skip the first line (metadata) and parse each subsequent line
+        rows = []
+        for (const line of lines.slice(1)) {
+          try {
+            rows.push(JSON.parse(line))
+          } catch {
+            rows.push([])
+          }
+          processedLines++
+
+          // Update progress for NDJSON parsing (50-75%)
+          if (processedLines % 1000 === 0) {
+            const parsingProgress = 50 + Math.round((processedLines / totalLines) * 25)
+            setProgress(prev => prev ? {
+              ...prev,
+              current: parsingProgress,
+              message: `Processing NDJSON data: ${Math.round((processedLines / totalLines) * 100)}%`
+            } : null)
+            await new Promise(resolve => setTimeout(resolve, 0))
+          }
+        }
+      } else {
+        // Regular JSON parsing
+        setProgress(prev => prev ? {
+          ...prev,
+          current: 60,
+          message: 'Processing JSON data...'
+        } : null)
+        const parsedContent = JSON.parse(content)
+        rows = parsedContent.rows || []
+      }
+
+      // Update progress for final processing (75-90%)
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 75,
+        message: 'Preparing data for display...'
+      } : null)
+
+      // Update both the file content and viewer state
+      fileData.content.rows = rows // Store the rows in the file content
+      setViewerState(prev => ({
+        ...prev,
+        filteredRows: rows,
+        totalRowCount: rows.length,
+        isLoadingRows: false, // Clear loading state after rows are loaded
+        activeFilter: '', // Reset active filter when loading new file
+        currentPage: 1 // Reset to first page
+      }))
+
+      // Final UI update (95-100%)
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 95,
+        message: 'Updating display...'
+      } : null)
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // Complete
+      setProgress(prev => prev ? {
+        ...prev,
+        current: 100,
+        message: 'Complete'
+      } : null)
+
+      // Clear progress after a short delay
+      setTimeout(() => setProgress(null), 500)
+
+    } catch (error) {
+      setViewerState(prev => ({ ...prev, isLoadingRows: false }))
+      setProgress({
+        total: 100,
+        current: 100,
+        message: 'Error loading file. Please try again.'
+      })
+      setTimeout(() => setProgress(null), 2000)
+    }
+  }, [])
+
+  // Update handleFileChange to handle loading state
+  const handleFileChange = useCallback((fileName: string) => {
+    const fileData = selectedFolderData?.files.find(f => f.name === fileName)
+    
+    if (!fileData) return
+    
+    setSelectedFile(fileName)
+    setViewerState(prev => ({
+      ...prev,
+      isLoadingRows: true // Set loading state before loading rows
+    }))
+    
+    // Use setTimeout to ensure state updates before loading rows
+    setTimeout(() => {
+      resetState()
+      loadFileRows(fileData)
+    }, 0)
+  }, [selectedFolderData, resetState, loadFileRows])
+
+  const handleSort = useCallback((columnName: string) => {
+    const columnIndex = columns.findIndex((col: ColumnMetadata) => col.name === columnName)
+    if (columnIndex === -1) return
+
+    setViewerState(prev => {
+      const existingSort = prev.sortConfig.find(s => s.key === columnName)
+      if (existingSort) {
+        if (existingSort.direction === 'asc') {
+          return {
+            ...prev,
+            sortConfig: prev.sortConfig.map(s => 
+              s.key === columnName ? { ...s, direction: 'desc' as const } : s
+            )
+          }
+        } else {
+          return {
+            ...prev,
+            sortConfig: prev.sortConfig.filter(s => s.key !== columnName)
+          }
+        }
+      } else {
+        return {
+          ...prev,
+          sortConfig: [...prev.sortConfig, { key: columnName, direction: 'asc' as const }]
+        }
+      }
+    })
+  }, [columns])
+
+  const handleToggleColumn = useCallback((columnName: string) => {
+    setViewerState(prev => ({
+      ...prev,
+      visibleColumns: prev.visibleColumns.includes(columnName)
+        ? prev.visibleColumns.filter(col => col !== columnName)
+        : [...prev.visibleColumns, columnName]
+    }))
+  }, [])
+
+  const handleColumnOrderChange = useCallback((newOrder: string[]) => {
+    setViewerState(prev => ({
+      ...prev,
+      columnOrder: newOrder,
+      visibleColumns: newOrder.filter(col => prev.visibleColumns.includes(col))
+    }))
+  }, [])
 
   const processFiles = async (files: FileList, format: 'json' | 'ndjson') => {
     const rootPath = files[0].webkitRelativePath.split('/')[0]
     const folderMap = new Map<string, FolderData>()
     let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
     let defineXmlFileMetadata: DefineXmlFileMetadata | null = null
+
+    // Start loading
+    setProgress({
+      total: 100,
+      current: 1,
+      message: 'Scanning files...'
+    })
 
     // First, look for define.xml
     for (const file of Array.from(files)) {
@@ -122,24 +623,23 @@ export default function JsonViewer() {
           defineXmlFileMetadata = fileMetadata
           break
         } catch {
-          console.warn('Failed to parse define.xml')
+          // Silently continue if define.xml parsing fails
         }
       }
     }
 
-    const totalFiles = Array.from(files).filter(file => {
+    setProgress(prev => prev ? { ...prev, current: 10, message: 'Processing files...' } : null)
+
+    const targetFiles = Array.from(files).filter(file => {
       const fileExt = format === 'json' ? '.json' : '.ndjson'
       return file.name.endsWith(fileExt)
-    }).length
+    })
 
+    const totalFiles = targetFiles.length
     let processedFiles = 0
 
-    for (const file of Array.from(files)) {
+    for (const file of targetFiles) {
       const pathParts = file.webkitRelativePath.split('/')
-      const fileExt = format === 'json' ? '.json' : '.ndjson'
-      if (!file.name.endsWith(fileExt)) continue
-
-      // Handle both root-level files and files in subfolders
       const folderName = pathParts.length > 2 ? pathParts[1] : rootPath
       const folderPath = pathParts.length > 2 ? `${rootPath}/${folderName}` : rootPath
 
@@ -155,16 +655,26 @@ export default function JsonViewer() {
 
       try {
         if (format === 'ndjson') {
-          const content = await file.text()
-          const lines = content.split(/\r?\n/).filter(line => line.trim())
-          if (lines.length === 0) continue
+          // For NDJSON, only read the first line for metadata
+          const reader = new FileReader()
+          const firstChunk = await new Promise<string>((resolve, reject) => {
+            const blob = file.slice(0, 64 * 1024) // Read first 64KB to get metadata
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = reject
+            reader.readAsText(blob)
+          })
 
-          const metadata = JSON.parse(lines[0])
-          const rows = lines.slice(1).map(line => JSON.parse(line))
+          const firstLine = firstChunk.split(/\r?\n/)[0]
+          if (!firstLine) continue
+
+          const metadata = JSON.parse(firstLine)
+          const recordCount = (firstChunk.match(/\n/g) || []).length // Estimate total records from first chunk
           
           const parsedContent = {
             ...metadata,
-            rows: rows
+            rows: [], // Don't load rows initially
+            records: recordCount,
+            columns: metadata.columns || []
           }
 
           // Add define.xml metadata if available
@@ -188,11 +698,7 @@ export default function JsonViewer() {
             rawFile: file
           })
         } else {
-          // For JSON files, we'll only read metadata first
-          console.log(`Processing file: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`)
-          
-          try {
-            // Read only the first chunk to get metadata
+          // For JSON files, read only metadata
             const chunk = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader()
               reader.onload = () => {
@@ -201,22 +707,18 @@ export default function JsonViewer() {
                 if (rowsStart === -1) {
                   resolve(content)
                 } else {
+                // Only read up to the rows array
                   resolve(content.substring(0, rowsStart) + '"rows":[]' + '}')
                 }
               }
               reader.onerror = reject
-              // Read only first 1MB which should be enough for metadata
-              const blob = file.slice(0, 1024 * 1024)
+            const blob = file.slice(0, 64 * 1024) // Read first 64KB for metadata
               reader.readAsText(blob)
             })
 
-            console.log(`Parsing metadata for: ${file.name}`)
             const parsedContent = JSON.parse(chunk)
-            console.log(`Found ${parsedContent.columns?.length || 0} columns in ${file.name}`)
 
-            // Add define.xml metadata if available
             if (defineXmlMetadata && parsedContent.columns) {
-              console.log(`Adding define.xml metadata to ${file.name}`)
               const columns = parsedContent.columns as ColumnMetadata[]
               columns.forEach(col => {
                 const defineMetadata = defineXmlMetadata?.get(col.itemOID)
@@ -226,46 +728,58 @@ export default function JsonViewer() {
               })
             }
 
-            folderData!.files.push({
+          folderData.files.push({
               name: file.name,
               content: {
                 ...parsedContent,
-                rows: [], // Initially empty, will be loaded on demand
+              columns: parsedContent.columns || [],
+              rows: [], // Don't load rows initially
+              records: parsedContent.records || 0,
                 ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
               },
               path: file.webkitRelativePath,
               rawFile: file
             })
-          } catch (error) {
-            console.error(`Error processing metadata for ${file.name}:`, error)
-            throw error
-          }
         }
 
         processedFiles++
-        setLoadingProgress((processedFiles / totalFiles) * 100)
-      } catch (error) {
-        console.error(`Error processing file ${file.name}:`, error)
+        const progress = Math.round((processedFiles / totalFiles) * 80) + 10 // 10-90% for file processing
+        setProgress(prev => prev ? {
+          ...prev,
+          current: progress,
+          message: `Processing files (${processedFiles}/${totalFiles})...`
+        } : null)
+        
+      } catch {
         continue
       }
     }
 
+    setProgress(prev => prev ? { ...prev, current: 90, message: 'Finalizing...' } : null)
+
     setSubfolders(Array.from(folderMap.values()))
     
     if (folderMap.size > 0) {
-      const firstFolder = folderMap.values().next().value;
+      const firstFolder = folderMap.values().next().value
       if (firstFolder) {
-        setSelectedFolder(firstFolder.path);
+        setSelectedFolder(firstFolder.path)
         if (firstFolder.files.length > 0) {
-          const firstFile = firstFolder.files[0].name;
-          setSelectedFile(firstFile);
+          const firstFile = firstFolder.files[0]
+          setSelectedFile(firstFile.name)
+          await loadFileRows(firstFile) // Wait for the first file's rows to load
         }
       }
     }
 
-    setCurrentPage(1)
-    setSidebarOpen(false)
-    setLoadingProgress(0)
+    setViewerState(prev => ({ 
+      ...prev, 
+      currentPage: 1, 
+      sidebarOpen: false,
+      loadingProgress: 0 
+    }))
+
+    setProgress(prev => prev ? { ...prev, current: 100, message: 'Complete' } : null)
+    setTimeout(() => setProgress(null), 500)
   }
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -317,7 +831,7 @@ export default function JsonViewer() {
               defineXmlFileMetadata = fileMetadata
               break
             } catch {
-              console.warn('Failed to parse define.xml')
+              // Silently continue if define.xml parsing fails
             }
           }
         }
@@ -499,209 +1013,21 @@ export default function JsonViewer() {
     }
   }
 
-  const selectedFolderData = subfolders.find(f => f.path === selectedFolder)
-  const selectedFileData = selectedFolderData?.files.find(f => f.name === selectedFile)
-
-  const columns = useMemo(() => {
-    return (selectedFileData?.content as { columns?: ColumnMetadata[] })?.columns || []
-  }, [selectedFileData])
-
-  const rows = useMemo(() => {
-    const fileRows = (selectedFileData?.content as { rows?: unknown[][] })?.rows
-    return Array.isArray(fileRows) ? fileRows : []
-  }, [selectedFileData])
-
+  // Update effect for initial data loading
   useEffect(() => {
-    const fileColumns = (selectedFileData?.content as { columns?: ColumnMetadata[] })?.columns
-    if (Array.isArray(fileColumns) && fileColumns.length > 0) {
-      const newColumnOrder = fileColumns.map((col: ColumnMetadata) => col.name)
-      setColumnOrder(newColumnOrder)
-      setVisibleColumns(newColumnOrder)
-    }
-  }, [selectedFileData])
-
-  // Apply filter to rows based on user input
-  const applyFilter = useCallback((filterString: string) => {
-    setActiveFilter(filterString);
-    if (!filterString.trim()) {
-      setFilteredRows(rows);
-      return { success: true, message: "Filter cleared. Showing all rows." };
-    }
-
-    try {
-      // First replace logical operators with JavaScript operators
-      let processedFilter = filterString
-        .replace(/\band\b/gi, '&&')
-        .replace(/\bor\b/gi, '||');
-
-      // Then replace column comparisons
-      processedFilter = processedFilter.replace(
-        /([a-zA-Z_][a-zA-Z0-9_]*)\s*(=|!=|>|<|>=|<=)\s*(["']?)([^"'\s]+)(["']?)/g,
-        (match, colName, operator, quote1, value, quote2) => {
-          const columnIndex = columns.findIndex((col: ColumnMetadata) => col.name === colName);
-          if (columnIndex === -1) {
-            throw new Error(`Unknown column: ${colName}`);
-          }
-
-          // Keep existing quotes if present, otherwise assume it's a number
-          const processedValue = quote1 || quote2 ? `${quote1}${value}${quote2}` : value;
-          
-          // Convert = to === for JavaScript equality
-          const jsOperator = operator === '=' ? '===' : operator;
-          
-          return `row[${columnIndex}] ${jsOperator} ${processedValue}`;
-        }
-      );
-
-      const filterFunction = new Function('row', `return ${processedFilter}`);
+    if (selectedFileData?.content) {
+      const fileContent = selectedFileData.content as { columns?: ColumnMetadata[], rows?: unknown[][] }
+      const columns = fileContent.columns || []
+      const columnNames = columns.map(col => col.name)
       
-      const filtered = rows.filter((row: unknown[]) => {
-        try {
-          return filterFunction(row);
-        } catch {
-          return false;
-        }
-      });
-
-      setFilteredRows(filtered);
-      return {
-        success: true,
-        message: `Filter applied successfully. Showing ${filtered.length} of ${rows.length} rows.`
-      };
-    } catch (error) {
-      setFilteredRows(rows);
-      return { 
-        success: false, 
-        message: error instanceof Error ? error.message : "Invalid filter criteria. Please check your input." 
-      };
+      setViewerState(prev => ({
+        ...prev,
+        columnOrder: columnNames,
+        visibleColumns: columnNames,
+        currentPage: 1,
+        sortConfig: []
+      }))
     }
-  }, [rows, columns]);
-
-  useEffect(() => {
-    if (rows.length > 0) {
-      applyFilter(activeFilter);
-    }
-  }, [rows, activeFilter, applyFilter]);
-
-  // Sort rows based on current sort configuration
-  const sortedRows = useMemo(() => {
-    if (sortConfig.length === 0) return filteredRows;
-
-    return [...filteredRows].sort((a: unknown[], b: unknown[]) => {
-      for (const sort of sortConfig) {
-        const index = columnOrder.indexOf(sort.key);
-        if (index === -1) continue;
-
-        const aVal = String(a[index] ?? '')
-        const bVal = String(b[index] ?? '')
-        if (aVal < bVal) return sort.direction === 'asc' ? -1 : 1;
-        if (aVal > bVal) return sort.direction === 'asc' ? 1 : -1;
-      }
-      return 0;
-    });
-  }, [filteredRows, columnOrder, sortConfig]);
-
-  const totalPages = Math.ceil(sortedRows.length / ROWS_PER_PAGE)
-  const startIndex = (currentPage - 1) * ROWS_PER_PAGE
-  const endIndex = startIndex + ROWS_PER_PAGE
-  const currentRows = sortedRows.slice(startIndex, endIndex)
-
-  const handleFileChange = (fileName: string) => {
-    console.log('Changing file to:', fileName);
-    setSelectedFile(fileName);
-    resetState();
-  }
-
-  const handleSort = (columnName: string) => {
-    const columnIndex = columns.findIndex((col: ColumnMetadata) => col.name === columnName)
-    if (columnIndex === -1) return
-
-    setSortConfig(prevSort => {
-      const existingSort = prevSort.find(s => s.key === columnName)
-      if (existingSort) {
-        if (existingSort.direction === 'asc') {
-          return prevSort.map(s => s.key === columnName ? { ...s, direction: 'desc' as const } : s)
-        } else {
-          return prevSort.filter(s => s.key !== columnName)
-        }
-      } else {
-        return [...prevSort, { key: columnName, direction: 'asc' as const }]
-      }
-    })
-  }
-
-  const handleToggleColumn = (columnName: string) => {
-    setVisibleColumns(prev => 
-      prev.includes(columnName)
-        ? prev.filter(col => col !== columnName)
-        : [...prev, columnName]
-    );
-  };
-
-  const handleColumnOrderChange = (newOrder: string[]) => {
-    setColumnOrder(newOrder)
-    // Update visible columns to match the new order while preserving visibility
-    const newVisibleColumns = newOrder.filter(col => visibleColumns.includes(col))
-    setVisibleColumns(newVisibleColumns)
-  }
-
-  useEffect(() => {
-    const loadRows = async () => {
-      const fileContent = selectedFileData?.content as { rows?: unknown[][] }
-      if (!selectedFileData?.rawFile || (fileContent.rows && fileContent.rows.length > 0)) return
-
-      console.log(`Loading rows for: ${selectedFileData.name} (${(selectedFileData.rawFile.size / (1024 * 1024)).toFixed(2)} MB)`)
-      setIsLoadingRows(true)
-      const startTime = performance.now()
-      let rowCount = 0
-
-      try {
-        // Create a URL for the file
-        const fileUrl = URL.createObjectURL(selectedFileData.rawFile)
-
-        const rows: unknown[][] = []
-        await new Promise<void>((resolve, reject) => {
-          oboe({
-            url: fileUrl,
-            headers: {
-              'Accept': 'application/json'
-            }
-          })
-            .node('rows.*', function(row) {
-              rows.push(row)
-              rowCount++
-              if (rowCount % 10000 === 0) {
-                console.log(`Loaded ${rowCount} rows...`)
-              }
-              return oboe.drop
-            })
-            .done(() => {
-              const duration = ((performance.now() - startTime) / 1000).toFixed(2)
-              console.log(`Finished loading ${rowCount} rows in ${duration}s`)
-              if (selectedFileData.content) {
-                selectedFileData.content.rows = rows
-                setFilteredRows(rows)
-              }
-              resolve()
-            })
-            .fail((error) => {
-              console.error(`Error loading rows for ${selectedFileData.name}:`, error)
-              reject(error)
-            })
-        })
-        
-        // Clean up the URL
-        URL.revokeObjectURL(fileUrl)
-      } catch (error) {
-        console.error(`Error loading rows for ${selectedFileData.name}:`, error)
-      } finally {
-        const duration = ((performance.now() - startTime) / 1000).toFixed(2)
-        console.log(`Total processing time: ${duration}s`)
-        setIsLoadingRows(false)
-      }
-    }
-
-    loadRows()
   }, [selectedFileData])
 
   return (
@@ -711,11 +1037,19 @@ export default function JsonViewer() {
         onDragOver={e => e.preventDefault()}
         onDrop={handleDrop}
       >
-        {(loadingProgress > 0 && loadingProgress < 100) || isLoadingRows ? (
+        {progress && (
           <div className="absolute top-0 left-0 right-0 z-50">
-            <Progress value={loadingProgress || 100} className="w-full" />
+            <div className="relative h-2 bg-muted">
+            <Progress 
+                value={progress.current} 
+                className="absolute top-0 left-0 w-full transition-all duration-300" 
+            />
+              <div className="absolute top-3 left-0 right-0 px-4 text-xs text-muted-foreground">
+                <span>{progress.message}</span>
+              </div>
           </div>
-        ) : null}
+          </div>
+        )}
         {/* Mobile Header */}
         <div className="md:hidden flex items-center justify-between p-4 border-b">
           <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -796,40 +1130,65 @@ export default function JsonViewer() {
                           </Button>
                           <ColumnVisibilityToggle
                             columns={columns}
-                            visibleColumns={visibleColumns}
+                            visibleColumns={viewerState.visibleColumns}
                             onToggleColumn={handleToggleColumn}
                             showColumnNames={showColumnNames}
                           />
                         </div>
                         <SortButton
-                          sortConfig={sortConfig}
+                          sortConfig={viewerState.sortConfig}
                           columns={columns}
-                          onSortChange={setSortConfig}
+                          onSortChange={(newConfig) => setViewerState(prev => ({ ...prev, sortConfig: newConfig }))}
                           showColumnNames={showColumnNames}
                         />
                       </div>
+                      <div className="flex gap-2 w-full">
+                        <div className="flex-1">
                       <FilterInput onFilter={applyFilter} />
+                        </div>
+                        <FilterBuilder 
+                          columns={columns} 
+                          onApplyFilter={applyFilter} 
+                          rows={rows}
+                        />
+                      </div>
                     </div>
                     <div className="flex-1 border rounded-lg overflow-auto">
+                      {columns.length > 0 ? (
+                        paginationValues.currentRows.length > 0 ? (
                       <TableComponent
                         columns={columns}
-                        rows={currentRows}
-                        columnOrder={columnOrder}
-                        visibleColumns={visibleColumns}
-                        sortConfig={sortConfig}
+                            rows={paginationValues.currentRows}
+                            columnOrder={viewerState.columnOrder}
+                            visibleColumns={viewerState.visibleColumns}
+                            sortConfig={viewerState.sortConfig}
                         showColumnNames={showColumnNames}
                         handleSort={handleSort}
                         onColumnOrderChange={handleColumnOrderChange}
                       />
+                        ) : (
+                          <div className="flex items-center justify-center h-full text-muted-foreground">
+                            {viewerState.isLoadingRows || progress ? (
+                              <p>Processing data, please wait...</p>
+                            ) : (
+                              <p>No rows to display</p>
+                            )}
                     </div>
-                    {totalPages > 1 && (
+                        )
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-muted-foreground">
+                          <p>No columns available</p>
+                        </div>
+                      )}
+                    </div>
+                    {paginationValues.totalPages > 1 && (
                       <PaginationControls
-                        currentPage={currentPage}
-                        totalPages={totalPages}
-                        startIndex={startIndex}
-                        endIndex={endIndex}
+                        currentPage={viewerState.currentPage}
+                        totalPages={paginationValues.totalPages}
+                        startIndex={paginationValues.startIndex}
+                        endIndex={paginationValues.endIndex}
                         totalRows={sortedRows.length}
-                        onPageChange={setCurrentPage}
+                        onPageChange={(page) => setViewerState(prev => ({ ...prev, currentPage: page }))}
                       />
                     )}
                   </TabsContent>
@@ -907,6 +1266,16 @@ export default function JsonViewer() {
         style={{ display: 'none' }}
         // @ts-expect-error - DragEvent types are not fully compatible
         webkitdirectory=""
+      />
+
+      <RowLimitDialog 
+        open={showRowLimitDialog}
+        onClose={() => {
+          setShowRowLimitDialog(false)
+          setRowLimitInfo(null)
+        }}
+        rowCount={rowLimitInfo?.rowCount || 0}
+        maxRows={rowLimitInfo?.maxRows || MAX_ROWS_ALLOWED}
       />
     </>
   )
