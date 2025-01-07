@@ -3,9 +3,14 @@
 import { useMemo } from 'react'
 import { ColumnMetadata } from '../types/types'
 
+interface UniqueValue {
+  value: string;
+  frequency: number;
+}
+
 interface UniqueValuesMap {
   [columnName: string]: {
-    values: Set<string>;
+    values: Map<string, number>;
     isNumeric: boolean;
     exceedsLimit: boolean;
   }
@@ -27,7 +32,7 @@ export function useUniqueValues(
 
     // Initialize map for each column
     columns.forEach((col, index) => {
-      const values = new Set<string>()
+      const values = new Map<string, number>()
       let isNumeric = true
       let exceedsLimit = false
 
@@ -41,12 +46,14 @@ export function useUniqueValues(
           isNumeric = false
         }
 
-        values.add(stringValue)
+        // Update frequency count
+        const currentCount = values.get(stringValue) || 0
+        values.set(stringValue, currentCount + 1)
 
         // Check if we've exceeded the limit
         if (values.size > maxUniqueValues) {
           exceedsLimit = true
-          values.clear() // Clear the set to save memory
+          values.clear() // Clear the map to save memory
           break
         }
       }
@@ -62,10 +69,14 @@ export function useUniqueValues(
   }, [columns, rows, maxUniqueValues])
 
   return {
-    getValues: (columnName: string): string[] => {
+    getValues: (columnName: string): UniqueValue[] => {
       const column = uniqueValuesMap[columnName]
       if (!column || column.exceedsLimit) return []
-      return Array.from(column.values).sort()
+      
+      // Convert Map to array of UniqueValue objects and sort by frequency (descending)
+      return Array.from(column.values.entries())
+        .map(([value, frequency]) => ({ value, frequency }))
+        .sort((a, b) => b.frequency - a.frequency)
     },
     isNumericColumn: (columnName: string): boolean => {
       return uniqueValuesMap[columnName]?.isNumeric ?? false
