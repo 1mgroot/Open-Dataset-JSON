@@ -60,7 +60,7 @@ Don't want to install? Use our live version directly! The application is deploye
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/dataset-json-viewer.git
+git clone https://github.com/1mgroot/Simple_Dataset-JSON_Viewer.git
 cd dataset-json-viewer
 ```
 
