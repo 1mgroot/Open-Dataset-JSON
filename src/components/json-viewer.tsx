@@ -117,6 +117,7 @@ export default function JsonViewer() {
   })
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
   // Memoize selected folder and file data
   const selectedFolderData = useMemo(() => 
@@ -804,9 +805,6 @@ export default function JsonViewer() {
   }, [])
 
   const processDirectoryEntry = async (dirEntry: FileSystemDirectoryEntry, format: 'json' | 'ndjson') => {
-    let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
-    let defineXmlFileMetadata: DefineXmlFileMetadata | null = null
-
     const processEntry = async (entry: FileSystemEntry): Promise<FolderData | null> => {
       if (entry.isDirectory) {
         const directoryEntry = entry as FileSystemDirectoryEntry
@@ -814,25 +812,6 @@ export default function JsonViewer() {
         const entries = await new Promise<FileSystemEntry[]>((resolve) => {
           reader.readEntries((entries) => resolve(entries))
         })
-
-        // First, look for define.xml
-        for (const subEntry of entries) {
-          if (subEntry.isFile && subEntry.name.toLowerCase() === 'define.xml') {
-            const fileEntry = subEntry as FileSystemFileEntry
-            try {
-              const file = await new Promise<File>((resolve) => {
-                fileEntry.file(resolve)
-              })
-              const content = await file.text()
-              const { metadata, fileMetadata } = await parseDefineXml(content)
-              defineXmlMetadata = metadata
-              defineXmlFileMetadata = fileMetadata
-              break
-            } catch {
-              // Silently continue if define.xml parsing fails
-            }
-          }
-        }
 
         const results = await Promise.all(entries.map(processEntry))
         const validResults = results.filter((result): result is FolderData => result !== null)
@@ -863,23 +842,9 @@ export default function JsonViewer() {
                     rows: rows
                   }
 
-                  // Add define.xml metadata if available
-                  if (defineXmlMetadata && parsedContent.columns) {
-                    const columns = parsedContent.columns as ColumnMetadata[]
-                    columns.forEach(col => {
-                      const defineMetadata = defineXmlMetadata?.get(col.itemOID)
-                      if (defineMetadata) {
-                        col.defineXmlMetadata = defineMetadata
-                      }
-                    })
-                  }
-
                   return {
                     name: file.name,
-                    content: {
-                      ...parsedContent,
-                      ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
-                    },
+                    content: parsedContent,
                     path: fileEntry.fullPath,
                     rawFile: file
                   }
@@ -888,8 +853,7 @@ export default function JsonViewer() {
                   return {
                     name: file.name,
                     content: {
-                      rows: [], // Initially empty, will be loaded on demand
-                      ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                      rows: [] // Initially empty, will be loaded on demand
                     },
                     path: fileEntry.fullPath,
                     rawFile: file
@@ -941,26 +905,12 @@ export default function JsonViewer() {
               rows: rows
             }
 
-            // Add define.xml metadata if available
-            if (defineXmlMetadata && parsedContent.columns) {
-              const columns = parsedContent.columns as ColumnMetadata[]
-              columns.forEach(col => {
-                const defineMetadata = defineXmlMetadata?.get(col.itemOID)
-                if (defineMetadata) {
-                  col.defineXmlMetadata = defineMetadata
-                }
-              })
-            }
-
             return {
               name: entry.name,
               path: entry.fullPath,
               files: [{
                 name: file.name,
-                content: {
-                  ...parsedContent,
-                  ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
-                },
+                content: parsedContent,
                 path: entry.fullPath,
                 rawFile: file
               }]
@@ -972,8 +922,7 @@ export default function JsonViewer() {
               files: [{
                 name: file.name,
                 content: {
-                  rows: [], // Initially empty, will be loaded on demand
-                  ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                  rows: [] // Initially empty, will be loaded on demand
                 },
                 path: entry.fullPath,
                 rawFile: file
@@ -1195,7 +1144,7 @@ export default function JsonViewer() {
             </Tabs>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">
-              <div className="text-center">
+              <div className="text-center space-y-6">
                 <div className="mb-4">
                   <svg
                     className="mx-auto h-12 w-12"
@@ -1211,13 +1160,54 @@ export default function JsonViewer() {
                     />
                   </svg>
                 </div>
-                <h3 className="text-lg font-semibold">Drag a folder here</h3>
-                <p 
-                  className="text-sm cursor-pointer hover:text-primary"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  or click to browse
-                </p>
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Upload your data</h3>
+                  <div className="flex items-center justify-center gap-4">
+                    <Button
+                      variant="outline"
+                      onClick={() => folderInputRef.current?.click()}
+                      className="min-w-32"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                        />
+                      </svg>
+                      Upload Folder
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="min-w-32"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                      Upload Files
+                    </Button>
+                  </div>
+                  <p className="text-sm mt-2">
+                    or drag files/folder here
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -1259,11 +1249,19 @@ export default function JsonViewer() {
 
       <input
         type="file"
-        ref={fileInputRef}
+        ref={folderInputRef}
         onChange={handleFileSelect}
         style={{ display: 'none' }}
         // @ts-expect-error - DragEvent types are not fully compatible
         webkitdirectory=""
+      />
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileSelect}
+        style={{ display: 'none' }}
+        multiple
+        accept=".json,.ndjson"
       />
 
       <RowLimitDialog 
