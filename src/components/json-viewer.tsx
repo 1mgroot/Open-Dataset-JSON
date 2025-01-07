@@ -1025,7 +1025,7 @@ export default function JsonViewer() {
 
         {/* Left Sidebar */}
         <div className={`w-full md:w-64 border-r bg-background ${sidebarOpen ? 'block' : 'hidden'} md:block overflow-y-auto`}>
-          <div className="p-4 font-semibold text-lg border-b">Folders</div>
+          <div className="p-4 font-semibold text-lg border-b">OpenDJ</div>
           <div className="py-2">
             {subfolders.map(folder => (
               <FolderTooltip key={folder.path} folder={folder}>
