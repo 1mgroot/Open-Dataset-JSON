@@ -1,8 +1,8 @@
 # Open Dataset-JSON
 
-A modern, high-performance web application for viewing and analyzing dataset JSON files. Built with Next.js and TypeScript, featuring an intuitive user interface and powerful data handling capabilities.
+A modern, high-performance web application for viewing and analyzing Dataset-JSON files. Built with Next.js and TypeScript, featuring an intuitive user interface and powerful data handling capabilities.
 
-🔗 **[Try it now on Vercel](https://lightweightdatasetjsonviewer.vercel.app/)**
+🔗 **[Try it now on Vercel](https://opendatasetjson.vercel.app/)**
 
 Don't want to install? Use our live version directly! The application is deployed on Vercel and ready to use in your browser. No installation required - just visit the link above and start analyzing your datasets.
 
@@ -60,8 +60,8 @@ Don't want to install? Use our live version directly! The application is deploye
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/dataset-json-viewer.git
-cd dataset-json-viewer
+git clone https://github.com/1mgroot/open-dataset-json.git
+cd open-dataset-json
 ```
 
 2. Install dependencies:
