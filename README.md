@@ -1,78 +1,125 @@
-# Dataset JSON Viewer
+# Zhen Dataset-JSON Viewer
 
-A lightweight, modern web application for viewing and analyzing dataset JSON files with an intuitive user interface.
+A modern, high-performance web application for viewing and analyzing dataset JSON files. Built with Next.js and TypeScript, featuring an intuitive user interface and powerful data handling capabilities.
 
-🔗 [Live Demo](https://lightweightdatasetjsonviewer.vercel.app/)
+🔗 **[Try it now on Vercel](https://lightweightdatasetjsonviewer.vercel.app/)**
+
+Don't want to install? Use our live version directly! The application is deployed on Vercel and ready to use in your browser. No installation required - just visit the link above and start analyzing your datasets.
 
 ## Features
 
-- 📁 Drag & Drop folder support
+### File Handling
+- 📁 Support for both folder and individual file uploads
+- 📄 Handles both JSON and NDJSON (New-line Delimited JSON) formats
+- 🔄 Efficient streaming for large files
+- 📊 Automatic metadata extraction
+- 🗂️ Multi-file support with tab-based navigation
+- 💾 Define.xml metadata integration
+
+### Data Visualization
 - 📊 Interactive data table with:
-  - Column sorting (multi-column support)
+  - Multi-column sorting
   - Column visibility toggle
-  - Column reordering
-  - Pagination
-- 🔍 Advanced filtering capabilities
-- 📱 Responsive design (mobile & desktop)
-- 🎯 Column name/label switching
-- 🗂️ Multi-file support within folders
+  - Drag-and-drop column reordering
+  - Smart pagination
+  - Responsive layout
+- 🏷️ Dynamic column name/label switching
+- 📱 Mobile-friendly design
+
+### Data Management
+- 🔍 Advanced filtering capabilities:
+  - Simple text-based filtering
+  - Complex filter builder with AND/OR operations
+  - Support for multiple operators (=, !=, >, <, >=, <=, contains, in, not in)
+  - Filter saving functionality
+- ⚡ Efficient data loading with progress indicators
 
 ## Getting Started
 
 ### Prerequisites
-
 - Node.js (version 18 or higher)
 - npm or yarn
+- Modern web browser with JavaScript enabled
 
 ### Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/1mgroot/Simple_Dataset-JSON_Viewer.git
-cd Simple_Dataset-JSON_Viewer
+git clone https://github.com/yourusername/dataset-json-viewer.git
+cd dataset-json-viewer
 ```
 
 2. Install dependencies:
 ```bash
 npm install
+# or
+yarn install
 ```
 
 3. Run the development server:
 ```bash
 npm run dev
+# or
+yarn dev
 ```
 
 4. Open [http://localhost:3000](http://localhost:3000) in your browser
 
 ## Usage
 
-1. **Loading Data**:
-   - Drag and drop a folder containing JSON files
-   - Or click to browse and select a folder
+### Loading Data
+1. **Upload Files/Folders**:
+   - Click "Upload Files" to select individual JSON/NDJSON files
+   - Click "Upload Folder" to select a folder containing JSON/NDJSON files
+   - Or drag and drop files/folders directly onto the interface
 
-2. **Viewing Data**:
-   - Switch between files using the tabs
+2. **Format Selection**:
+   - Choose between JSON or NDJSON format
+   - The application will automatically process the files accordingly
+
+### Working with Data
+1. **Viewing Data**:
+   - Navigate between files using the tab interface
    - Toggle between column names and labels
-   - Show/hide columns using the column visibility toggle
-   - Sort data by clicking column headers
-   - Reorder columns by dragging them
+   - Show/hide columns using the visibility toggle
+   - Reorder columns via drag and drop
+   - Sort data by clicking column headers (multi-column sort supported)
 
-3. **Filtering Data**:
-   - Use the filter input to query data
-   - Supports complex filtering with AND/OR operators
-   - Example: `column1 > 10 and column2 = "value"`
+2. **Filtering Data**:
+   - Use the simple filter input for quick searches
+   - Use the Filter Builder for complex conditions
+   - Combine multiple conditions with AND/OR operators
+   - Save frequently used filters
 
-## Built With
+3. **Performance Features**:
+   - Lazy loading for large datasets
+   - Progress indicators for long operations
+   - Row limit management to prevent browser overload
 
+## Technical Stack
+
+### Core Technologies
 - [Next.js](https://nextjs.org/) - React framework
-- [Tailwind CSS](https://tailwindcss.com/) - CSS framework
+- [TypeScript](https://www.typescriptlang.org/) - Type safety
+- [Tailwind CSS](https://tailwindcss.com/) - Styling
 - [shadcn/ui](https://ui.shadcn.com/) - UI components
-- [DND Kit](https://dndkit.com/) - Drag and drop functionality
+
+### Key Libraries
+- [@dnd-kit](https://dndkit.com/) - Drag and drop functionality
+- [Radix UI](https://www.radix-ui.com/) - Accessible component primitives
+- [Lucide React](https://lucide.dev/) - Icons
+- [stream-json](https://www.npmjs.com/package/stream-json) - JSON streaming
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Deployment
+## Acknowledgments
 
-The application is deployed on [Vercel](https://vercel.com) and can be accessed at [https://lightweightdatasetjsonviewer.vercel.app/](https://lightweightdatasetjsonviewer.vercel.app/)
+- Built with [shadcn/ui](https://ui.shadcn.com/) components
+- Icons by [Lucide](https://lucide.dev/)
+- Inspired by the need for efficient dataset viewing tools
