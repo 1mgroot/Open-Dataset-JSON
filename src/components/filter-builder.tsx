@@ -261,9 +261,9 @@ export function FilterBuilder({ columns, onApplyFilter, rows }: FilterBuilderPro
     <>
       <Button
         variant="outline"
-        size="sm"
+        size="default"
         onClick={() => setShowBuilder(true)}
-        className="h-9"
+        className="h-10 px-4"
         disabled={!hasRows}
         title={!hasRows ? "Please wait while data is loading..." : "Open filter builder"}
       >
