@@ -102,8 +102,6 @@ export default function JsonViewer() {
   const [showRowLimitDialog, setShowRowLimitDialog] = useState(false)
   const [rowLimitInfo, setRowLimitInfo] = useState<{ rowCount: number, maxRows: number } | null>(null)
   const [progress, setProgress] = useState<ProgressState | null>(null)
-  const [defineXmlMetadata, setDefineXmlMetadata] = useState<Map<string, DefineXmlMetadata> | null>(null)
-  const [defineXmlFileMetadata, setDefineXmlFileMetadata] = useState<DefineXmlFileMetadata | null>(null)
 
   // Combine related state into a single object to prevent partial updates
   const [viewerState, setViewerState] = useState<FileViewerState>({
@@ -787,28 +785,6 @@ export default function JsonViewer() {
     const files = e.target.files
     if (!files) return
 
-    // Check if there are only XML files
-    const onlyXmlFiles = Array.from(files).every(file => file.name.toLowerCase().endsWith('.xml'))
-    
-    if (onlyXmlFiles) {
-      // Process XML files directly without showing format dialog
-      for (const file of Array.from(files)) {
-        if (file.name.toLowerCase() === 'define.xml') {
-          try {
-            const content = await file.text()
-            const { metadata, fileMetadata } = await parseDefineXml(content)
-            // Store the metadata for later use
-            setDefineXmlMetadata(metadata)
-            setDefineXmlFileMetadata(fileMetadata)
-          } catch (error) {
-            console.error('Error parsing define.xml:', error)
-          }
-        }
-      }
-      return
-    }
-
-    // For JSON/NDJSON files, show format dialog as before
     setPendingFiles(files)
     setShowFormatDialog(true)
   }
@@ -829,9 +805,6 @@ export default function JsonViewer() {
   }, [])
 
   const processDirectoryEntry = async (dirEntry: FileSystemDirectoryEntry, format: 'json' | 'ndjson') => {
-    let defineXmlMetadata: Map<string, DefineXmlMetadata> | null = null
-    let defineXmlFileMetadata: DefineXmlFileMetadata | null = null
-
     const processEntry = async (entry: FileSystemEntry): Promise<FolderData | null> => {
       if (entry.isDirectory) {
         const directoryEntry = entry as FileSystemDirectoryEntry
@@ -839,25 +812,6 @@ export default function JsonViewer() {
         const entries = await new Promise<FileSystemEntry[]>((resolve) => {
           reader.readEntries((entries) => resolve(entries))
         })
-
-        // First, look for define.xml
-        for (const subEntry of entries) {
-          if (subEntry.isFile && subEntry.name.toLowerCase() === 'define.xml') {
-            const fileEntry = subEntry as FileSystemFileEntry
-            try {
-              const file = await new Promise<File>((resolve) => {
-                fileEntry.file(resolve)
-              })
-              const content = await file.text()
-              const { metadata, fileMetadata } = await parseDefineXml(content)
-              defineXmlMetadata = metadata
-              defineXmlFileMetadata = fileMetadata
-              break
-            } catch {
-              // Silently continue if define.xml parsing fails
-            }
-          }
-        }
 
         const results = await Promise.all(entries.map(processEntry))
         const validResults = results.filter((result): result is FolderData => result !== null)
@@ -888,23 +842,9 @@ export default function JsonViewer() {
                     rows: rows
                   }
 
-                  // Add define.xml metadata if available
-                  if (defineXmlMetadata && parsedContent.columns) {
-                    const columns = parsedContent.columns as ColumnMetadata[]
-                    columns.forEach(col => {
-                      const defineMetadata = defineXmlMetadata?.get(col.itemOID)
-                      if (defineMetadata) {
-                        col.defineXmlMetadata = defineMetadata
-                      }
-                    })
-                  }
-
                   return {
                     name: file.name,
-                    content: {
-                      ...parsedContent,
-                      ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
-                    },
+                    content: parsedContent,
                     path: fileEntry.fullPath,
                     rawFile: file
                   }
@@ -913,8 +853,7 @@ export default function JsonViewer() {
                   return {
                     name: file.name,
                     content: {
-                      rows: [], // Initially empty, will be loaded on demand
-                      ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                      rows: [] // Initially empty, will be loaded on demand
                     },
                     path: fileEntry.fullPath,
                     rawFile: file
@@ -966,26 +905,12 @@ export default function JsonViewer() {
               rows: rows
             }
 
-            // Add define.xml metadata if available
-            if (defineXmlMetadata && parsedContent.columns) {
-              const columns = parsedContent.columns as ColumnMetadata[]
-              columns.forEach(col => {
-                const defineMetadata = defineXmlMetadata?.get(col.itemOID)
-                if (defineMetadata) {
-                  col.defineXmlMetadata = defineMetadata
-                }
-              })
-            }
-
             return {
               name: entry.name,
               path: entry.fullPath,
               files: [{
                 name: file.name,
-                content: {
-                  ...parsedContent,
-                  ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
-                },
+                content: parsedContent,
                 path: entry.fullPath,
                 rawFile: file
               }]
@@ -997,8 +922,7 @@ export default function JsonViewer() {
               files: [{
                 name: file.name,
                 content: {
-                  rows: [], // Initially empty, will be loaded on demand
-                  ...(defineXmlFileMetadata && { defineXMLMetadata: defineXmlFileMetadata })
+                  rows: [] // Initially empty, will be loaded on demand
                 },
                 path: entry.fullPath,
                 rawFile: file
@@ -1337,7 +1261,7 @@ export default function JsonViewer() {
         onChange={handleFileSelect}
         style={{ display: 'none' }}
         multiple
-        accept=".json,.ndjson,.xml"
+        accept=".json,.ndjson"
       />
 
       <RowLimitDialog 
