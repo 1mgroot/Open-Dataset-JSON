@@ -24,6 +24,8 @@ import { FolderTooltip } from './folder-tooltip'
 import { Progress } from "@/components/ui/progress"
 import { RowLimitDialog } from './row-limit-dialog'
 import { FilterBuilder } from './filter-builder'
+import { UniqueValuesTree } from './unique-values-tree'
+import { useUniqueValues, UniqueValue } from '../hooks/useUniqueValues'
 
 declare global {
   interface Performance {
@@ -102,6 +104,7 @@ export default function JsonViewer() {
   const [showRowLimitDialog, setShowRowLimitDialog] = useState(false)
   const [rowLimitInfo, setRowLimitInfo] = useState<{ rowCount: number, maxRows: number } | null>(null)
   const [progress, setProgress] = useState<ProgressState | null>(null)
+  const [showUniqueValues, setShowUniqueValues] = useState(false)
 
   // Combine related state into a single object to prevent partial updates
   const [viewerState, setViewerState] = useState<FileViewerState>({
@@ -977,6 +980,20 @@ export default function JsonViewer() {
     }
   }, [selectedFileData])
 
+  // Add useUniqueValues hook
+  const uniqueValues = useUniqueValues(columns, rows)
+  const uniqueValuesMap = useMemo(() => {
+    const map: { [key: string]: { values: UniqueValue[]; isNumeric: boolean; exceedsLimit: boolean } } = {}
+    columns.forEach(col => {
+      map[col.name] = {
+        values: uniqueValues.getValues(col.name),
+        isNumeric: uniqueValues.isNumericColumn(col.name),
+        exceedsLimit: uniqueValues.exceedsLimit(col.name)
+      }
+    })
+    return map
+  }, [columns, uniqueValues])
+
   return (
     <>
       <div 
@@ -1008,7 +1025,7 @@ export default function JsonViewer() {
 
         {/* Left Sidebar */}
         <div className={`w-full md:w-64 border-r bg-background ${sidebarOpen ? 'block' : 'hidden'} md:block overflow-y-auto`}>
-          <div className="p-4 font-semibold text-lg border-b">Folders</div>
+          <div className="p-4 font-semibold text-lg border-b">OpenDJ</div>
           <div className="py-2">
             {subfolders.map(folder => (
               <FolderTooltip key={folder.path} folder={folder}>
@@ -1074,6 +1091,36 @@ export default function JsonViewer() {
                           >
                             <Tag className="mr-2 h-4 w-4" />
                             {showColumnNames ? "Show Labels" : "Show Names"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-9"
+                            onClick={() => setShowUniqueValues(true)}
+                            disabled={viewerState.isLoadingRows || !selectedFileData}
+                          >
+                            <svg
+                              className="mr-2 h-4 w-4"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              strokeWidth={2}
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M17 18a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h10l4 4v6m-7-5v5"
+                              />
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M9 15h4"
+                              />
+                            </svg>
+                            Dataset Frequency Overview
+                            {viewerState.isLoadingRows && (
+                              <span className="ml-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                            )}
                           </Button>
                           <ColumnVisibilityToggle
                             columns={columns}
@@ -1144,7 +1191,7 @@ export default function JsonViewer() {
             </Tabs>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">
-              <div className="text-center space-y-6">
+              <div className="text-center space-y-6 max-w-2xl">
                 <div className="mb-4">
                   <svg
                     className="mx-auto h-12 w-12"
@@ -1207,6 +1254,11 @@ export default function JsonViewer() {
                   <p className="text-sm mt-2">
                     or drag files/folder here
                   </p>
+                  <div className="mt-6 text-sm text-muted-foreground bg-muted/50 p-4 rounded-lg">
+                    <p className="font-medium mb-2">🔒 Privacy Notice</p>
+                    <p>This is a client-side only application. Your data stays in your browser and is never uploaded to any server. 
+                    No user information or files are stored. You can safely use this tool with sensitive data.</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1273,6 +1325,19 @@ export default function JsonViewer() {
         rowCount={rowLimitInfo?.rowCount || 0}
         maxRows={rowLimitInfo?.maxRows || MAX_ROWS_ALLOWED}
       />
+
+      {/* Add Dataset Frequency Overview Dialog */}
+      <Dialog open={showUniqueValues} onOpenChange={setShowUniqueValues}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Dataset Frequency Overview</DialogTitle>
+            <DialogDescription>
+              Explore frequency of each value for each column in {selectedFileData?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <UniqueValuesTree uniqueValuesMap={uniqueValuesMap} />
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

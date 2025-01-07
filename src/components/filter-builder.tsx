@@ -16,12 +16,15 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogClose,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { ColumnMetadata } from "../types/types"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useUniqueValues } from "@/hooks/useUniqueValues"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
 
 interface FilterCondition {
   id: string
@@ -57,6 +60,7 @@ export function FilterBuilder({ columns, onApplyFilter, rows }: FilterBuilderPro
   const [filterName, setFilterName] = React.useState("")
   const [showBuilder, setShowBuilder] = React.useState(false)
   const [showColumnNames, setShowColumnNames] = React.useState(false)
+  const [filterPreview, setFilterPreview] = React.useState("")
 
   // Use refs for tracking initialization and updates
   const isInitialized = React.useRef(false)
@@ -96,7 +100,14 @@ export function FilterBuilder({ columns, onApplyFilter, rows }: FilterBuilderPro
   }, [columns])
 
   const removeCondition = React.useCallback((id: string) => {
-    setConditions(prev => prev.filter(c => c.id !== id))
+    setConditions(prev => {
+      const newConditions = prev.filter(c => c.id !== id)
+      // If removing the last condition, close the dialog
+      if (newConditions.length === 0) {
+        setShowBuilder(false)
+      }
+      return newConditions
+    })
   }, [])
 
   const updateCondition = React.useCallback((id: string, updates: Partial<FilterCondition>) => {
@@ -242,6 +253,99 @@ export function FilterBuilder({ columns, onApplyFilter, rows }: FilterBuilderPro
     return showColumnNames ? col.name : (col.label || col.name)
   }, [showColumnNames])
 
+  const renderValueInput = React.useCallback((condition: FilterCondition) => {
+    const isInOperator = condition.operator === 'in' || condition.operator === 'not in'
+    const columnValues = uniqueValues.getValues(condition.column)
+    
+    if (isInOperator && columnValues.length > 0) {
+      return (
+        <div className="flex-1">
+          <Select
+            value={condition.selectedValues?.join(',')}
+            onValueChange={(value) => {
+              const selectedValues = condition.selectedValues || []
+              const newSelectedValues = selectedValues.includes(value)
+                ? selectedValues.filter(v => v !== value)
+                : [...selectedValues, value]
+              
+              updateCondition(condition.id, {
+                selectedValues: newSelectedValues,
+                value: newSelectedValues.join(', ')
+              })
+            }}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select values">
+                {condition.selectedValues?.length 
+                  ? `${condition.selectedValues.length} selected`
+                  : "Select values"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <ScrollArea className="h-[280px]">
+                <div className="p-1">
+                  {columnValues.map(({ value, frequency }) => (
+                    <div
+                      key={value}
+                      className="flex items-center justify-between hover:bg-accent/50 rounded-md px-2 py-1.5 cursor-pointer transition-colors"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        const selectedValues = condition.selectedValues || []
+                        const newSelectedValues = selectedValues.includes(value)
+                          ? selectedValues.filter(v => v !== value)
+                          : [...selectedValues, value]
+                        
+                        updateCondition(condition.id, {
+                          selectedValues: newSelectedValues,
+                          value: newSelectedValues.join(', ')
+                        })
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary">
+                          {(condition.selectedValues || []).includes(value) && (
+                            <span className="text-primary text-xs">✓</span>
+                          )}
+                        </div>
+                        <span className="text-sm">{value || "(empty)"}</span>
+                      </div>
+                      <Badge variant="secondary" className="ml-2 text-xs font-normal">
+                        {frequency}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </SelectContent>
+          </Select>
+        </div>
+      )
+    }
+
+    return (
+      <Input
+        value={condition.value}
+        onChange={(e) => updateCondition(condition.id, { value: e.target.value })}
+        placeholder="Enter value..."
+        className="flex-1"
+      />
+    )
+  }, [uniqueValues, updateCondition])
+
+  // Update filter preview whenever conditions change
+  React.useEffect(() => {
+    const newFilterString = buildFilterString(conditions)
+    setFilterPreview(newFilterString)
+  }, [conditions, buildFilterString])
+
+  // Watch for empty conditions and clear filter
+  React.useEffect(() => {
+    if (conditions.length === 0) {
+      onApplyFilter("") // Clear the filter by applying an empty string
+      setFilterPreview("") // Clear the preview
+    }
+  }, [conditions, onApplyFilter])
+
   // Early return during SSR
   if (!isClient) {
     return (
@@ -261,270 +365,211 @@ export function FilterBuilder({ columns, onApplyFilter, rows }: FilterBuilderPro
     <>
       <Button
         variant="outline"
-        size="default"
-        onClick={() => setShowBuilder(true)}
         className="h-10 px-4"
+        onClick={() => setShowBuilder(true)}
         disabled={!hasRows}
-        title={!hasRows ? "Please wait while data is loading..." : "Open filter builder"}
       >
         <Filter className="mr-2 h-4 w-4" />
-        {hasRows ? "Filter Builder" : "Loading..."}
+        Filter Builder
       </Button>
 
       <Dialog open={showBuilder} onOpenChange={setShowBuilder}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Build Filter</DialogTitle>
-            <DialogDescription>
-              {hasRows ? (
-                "Create complex filters by adding conditions"
-              ) : (
-                "Loading data, please wait..."
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          {hasRows ? (
-            <div className="space-y-4">
-              <div className="flex justify-end">
+        <DialogContent className="sm:max-w-[600px] md:max-w-[800px] lg:max-w-[900px] p-0">
+          <DialogHeader className="p-6 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-xl">Filter Builder</DialogTitle>
+                <DialogDescription className="mt-1.5">
+                  Build complex filters by combining multiple conditions
+                </DialogDescription>
+              </div>
+              <div className="flex items-center gap-3">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setShowColumnNames(!showColumnNames)}
-                  className="h-8"
+                  className="h-9"
                 >
                   <Tag className="mr-2 h-4 w-4" />
-                  {showColumnNames ? "Show Labels" : "Show Names"}
+                  Show {showColumnNames ? "Labels" : "Names"}
                 </Button>
+                {conditions.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowSaveDialog(true)}
+                    className="h-9"
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    Save Filter
+                  </Button>
+                )}
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="px-6 pb-6">
+            <div className="space-y-4">
+              {conditions.map((condition) => (
+                <div key={condition.id} className="flex gap-3 items-start">
+                  <Select
+                    value={condition.column}
+                    onValueChange={(value) => updateCondition(condition.id, { column: value })}
+                  >
+                    <SelectTrigger className="w-[240px]">
+                      <SelectValue placeholder="Select column" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {columns.map((col) => (
+                        <SelectItem
+                          key={col.name}
+                          value={col.name}
+                          title={getColumnTooltip(col)}
+                        >
+                          {getColumnDisplay(col)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select
+                    value={condition.operator}
+                    onValueChange={(value) => updateCondition(condition.id, { operator: value })}
+                  >
+                    <SelectTrigger className="w-[140px]">
+                      <SelectValue placeholder="Operator" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getOperatorsForColumn(condition.column).map((op) => (
+                        <SelectItem
+                          key={op.value}
+                          value={op.value}
+                          title={getOperatorTooltip(op.value, condition.column)}
+                        >
+                          {op.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {renderValueInput(condition)}
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeCondition(condition.id)}
+                    className="shrink-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+
+              <div className="flex justify-between pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={addCondition}
+                  className="h-9"
+                >
+                  <PlusCircle className="mr-2 h-4 w-4" />
+                  Add Condition
+                </Button>
+
+                {conditions.length > 0 && (
+                  <Button 
+                    onClick={applyFilter}
+                    size="sm"
+                    className="h-9 px-8"
+                  >
+                    Apply Filter
+                  </Button>
+                )}
               </div>
 
-              {/* Conditions */}
-              <div className="space-y-2">
-                {conditions.map((condition) => (
-                  <div key={condition.id} className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-4">
-                      <Select
-                        value={condition.column}
-                        onValueChange={(value) => updateCondition(condition.id, { column: value })}
-                      >
-                        <SelectTrigger 
-                          className="w-full"
-                          title={getColumnTooltip(columns.find(col => col.name === condition.column)!)}
-                        >
-                          <SelectValue placeholder="Select column" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <ScrollArea className="h-[200px]">
-                            {columns.map((col) => (
-                              <SelectItem 
-                                key={col.name} 
-                                value={col.name}
-                                title={getColumnTooltip(col)}
-                              >
-                                {getColumnDisplay(col)}
-                                {uniqueValues.exceedsLimit(col.name) && (
-                                  <span className="ml-2 text-xs text-muted-foreground">
-                                    (many values)
-                                  </span>
-                                )}
-                              </SelectItem>
-                            ))}
-                          </ScrollArea>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="col-span-3">
-                      <Select
-                        value={condition.operator}
-                        onValueChange={(value) => updateCondition(condition.id, { operator: value })}
-                      >
-                        <SelectTrigger 
-                          className="w-full"
-                          title={getOperatorTooltip(condition.operator, condition.column)}
-                        >
-                          <SelectValue placeholder="Select operator" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getOperatorsForColumn(condition.column).map((op) => (
-                            <SelectItem 
-                              key={op.value} 
-                              value={op.value}
-                              title={getOperatorTooltip(op.value, condition.column)}
-                            >
-                              {op.label} ({op.symbol})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="col-span-4">
-                      {(condition.operator === "in" || condition.operator === "not in") && !uniqueValues.exceedsLimit(condition.column) ? (
-                        <Select
-                          value={condition.selectedValues?.join(',')}
-                          onValueChange={(value) => {
-                            console.group('Value selection change')
-                            console.log('Current value:', value)
-                            console.log('Current selected values:', condition.selectedValues)
-
-                            const currentValues = condition.selectedValues || []
-                            const newValues = currentValues.includes(value)
-                              ? currentValues.filter(v => v !== value)
-                              : [...currentValues, value]
-
-                            console.log('New selected values:', newValues)
-                            console.groupEnd()
-
-                            updateCondition(condition.id, { 
-                              selectedValues: newValues,
-                              value: newValues.join(', ')
-                            })
-                          }}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue>
-                              {condition.selectedValues?.length 
-                                ? `${condition.selectedValues.length} selected`
-                                : "Select values"}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <ScrollArea className="h-[200px]">
-                              {uniqueValues.getValues(condition.column).map((value) => (
-                                <SelectItem 
-                                  key={value} 
-                                  value={value}
-                                  className="relative flex items-center"
-                                >
-                                  <div className="flex items-center">
-                                    <div className="w-4 h-4 mr-2 border rounded flex items-center justify-center">
-                                      {condition.selectedValues?.includes(value) && (
-                                        <span className="text-primary">✓</span>
-                                      )}
-                                    </div>
-                                    {value}
-                                  </div>
-                                </SelectItem>
-                              ))}
-                            </ScrollArea>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Input
-                          value={condition.value}
-                          onChange={(e) => updateCondition(condition.id, { value: e.target.value })}
-                          className="w-full"
-                          placeholder="Enter value"
-                        />
-                      )}
-                    </div>
-
-                    <div className="col-span-1 flex justify-end">
+              {conditions.length > 0 && (
+                <div className="pt-4">
+                  <Separator className="mb-4" />
+                  <div className="space-y-2">
+                    <Label htmlFor="filter-preview" className="text-sm font-medium">
+                      Filter String Preview
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="filter-preview"
+                        value={filterPreview}
+                        readOnly
+                        className="pr-20 font-mono text-sm bg-muted/50"
+                      />
                       <Button
                         variant="ghost"
-                        size="icon"
-                        onClick={() => removeCondition(condition.id)}
+                        size="sm"
+                        className="absolute right-1 top-1 h-7"
+                        onClick={() => {
+                          navigator.clipboard.writeText(filterPreview)
+                        }}
                       >
-                        <X className="h-4 w-4" />
+                        Copy
                       </Button>
                     </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Add Condition Button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={addCondition}
-                className="w-full"
-              >
-                <PlusCircle className="mr-2 h-4 w-4" />
-                Add Condition
-              </Button>
-
-              {/* Saved Filters */}
-              {savedFilters.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-sm font-medium">Saved Filters</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {savedFilters.map((filter, index) => (
-                      <Badge
-                        key={index}
-                        variant="secondary"
-                        className="cursor-pointer"
-                        onClick={() => loadFilter(filter.conditions)}
-                      >
-                        {filter.name}
-                      </Badge>
-                    ))}
                   </div>
                 </div>
               )}
 
-              {/* Action Buttons */}
-              <div className="flex justify-between">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowSaveDialog(true)}
-                  disabled={conditions.length === 0}
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Filter
-                </Button>
-                <div className="space-x-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowBuilder(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={applyFilter}
-                    disabled={conditions.length === 0}
-                  >
-                    Apply Filter
-                  </Button>
+              {savedFilters.length > 0 && (
+                <div className="border-t mt-6 pt-4">
+                  <h4 className="font-medium mb-3">Saved Filters</h4>
+                  <div className="space-y-2">
+                    {savedFilters.map((filter, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 hover:bg-accent rounded-md"
+                      >
+                        <span className="text-sm">{filter.name}</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => loadFilter(filter.conditions)}
+                          className="h-8"
+                        >
+                          Load
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
-          ) : (
-            <div className="flex items-center justify-center h-32">
-              <p className="text-muted-foreground">Loading data, please wait...</p>
-            </div>
-          )}
+          </div>
         </DialogContent>
       </Dialog>
 
-      {/* Save Filter Dialog */}
       <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle>Save Filter</DialogTitle>
             <DialogDescription>
               Give your filter a name to save it for later use
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 pt-2">
             <Input
               value={filterName}
               onChange={(e) => setFilterName(e.target.value)}
-              placeholder="Enter filter name"
+              placeholder="Filter name..."
+              className="h-9"
             />
-            <div className="flex justify-end space-x-2">
-              <Button
-                variant="outline"
-                onClick={() => setShowSaveDialog(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={saveFilter}
-                disabled={!filterName.trim()}
+            <div className="flex justify-end gap-3">
+              <DialogClose asChild>
+                <Button variant="outline" size="sm" className="h-9">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button 
+                onClick={saveFilter} 
+                disabled={!filterName.trim()} 
+                size="sm"
+                className="h-9"
               >
                 Save
               </Button>
