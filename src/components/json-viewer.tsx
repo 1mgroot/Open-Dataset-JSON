@@ -1191,7 +1191,7 @@ export default function JsonViewer() {
             </Tabs>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground p-4">
-              <div className="text-center space-y-6">
+              <div className="text-center space-y-6 max-w-2xl">
                 <div className="mb-4">
                   <svg
                     className="mx-auto h-12 w-12"
@@ -1254,6 +1254,11 @@ export default function JsonViewer() {
                   <p className="text-sm mt-2">
                     or drag files/folder here
                   </p>
+                  <div className="mt-6 text-sm text-muted-foreground bg-muted/50 p-4 rounded-lg">
+                    <p className="font-medium mb-2">🔒 Privacy Notice</p>
+                    <p>This is a client-side only application. Your data stays in your browser and is never uploaded to any server. 
+                    No user information or files are stored. You can safely use this tool with sensitive data.</p>
+                  </div>
                 </div>
               </div>
             </div>
