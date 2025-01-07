@@ -1020,12 +1020,12 @@ export default function JsonViewer() {
             <Menu className="h-6 w-6" />
             <span className="sr-only">Toggle sidebar</span>
           </Button>
-          <h1 className="text-lg font-semibold">JSON Viewer</h1>
+          <h1 className="text-lg font-semibold">Open Dataset-JSON</h1>
         </div>
 
         {/* Left Sidebar */}
         <div className={`w-full md:w-64 border-r bg-background ${sidebarOpen ? 'block' : 'hidden'} md:block overflow-y-auto`}>
-          <div className="p-4 font-semibold text-lg border-b">OpenDJ</div>
+          <div className="p-4 font-semibold text-lg border-b">Open Dataset-JSON</div>
           <div className="py-2">
             {subfolders.map(folder => (
               <FolderTooltip key={folder.path} folder={folder}>
