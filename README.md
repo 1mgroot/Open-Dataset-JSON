@@ -2,11 +2,17 @@
 
 A modern, high-performance web application for viewing and analyzing Dataset-JSON files. Built with Next.js and TypeScript, featuring an intuitive user interface and powerful data handling capabilities.
 
-🔗 **[Try it now on Vercel](https://opendatasetjson.vercel.app/)**
+For more information about Dataset-JSON, please refer to the following links:
+- [Dataset-JSON](https://www.cdisc.org/standards/data-exchange/dataset-json)
+- [Dataset-JSON v1.1 Specification](https://wiki.cdisc.org/display/PUB/Dataset-JSON+1.1+-+Specification)
+- [Dataset-JSON v1.1 User's Guide](https://wiki.cdisc.org/display/PUB/Dataset-JSON+v1.1+User%27s+Guide)
 
+🔗 **[Try it now on Vercel](https://opendatasetjson.vercel.app/)**
 Don't want to install? Use our live version directly! The application is deployed on Vercel and ready to use in your browser. No installation required - just visit the link above and start analyzing your datasets.
 
-## 
+Example Dataset-JSON files: The example folder under [DataExchange-DatasetJson](https://github.com/cdisc-org/DataExchange-DatasetJson)
+
+## Author
 
 Designer: Yuxin Shen (ys6743@nyu.edu)
 Programmer: [@1mgroot](https://github.com/1mgroot)
