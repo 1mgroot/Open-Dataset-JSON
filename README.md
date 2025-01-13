@@ -6,6 +6,13 @@ A modern, high-performance web application for viewing and analyzing Dataset-JSO
 
 Don't want to install? Use our live version directly! The application is deployed on Vercel and ready to use in your browser. No installation required - just visit the link above and start analyzing your datasets.
 
+## 
+
+Designer: Yuxin Shen (ys6743@nyu.edu)
+Programmer: [@1mgroot](https://github.com/1mgroot)
+
+If you have any questions or suggestions, please contact us at ys6743@nyu.edu. Or add issues on GitHub.
+
 ## Privacy & Security
 
 🔒 **Client-Side Only Processing**
