@@ -27,6 +27,16 @@ Programmer: [@1mgroot](https://github.com/1mgroot)
 
 If you have any questions or suggestions, please contact us at ys6743@nyu.edu. Or add issues on GitHub.
 
+## Screenshots
+
+### Main Interface
+![Dataset-JSON Viewer Main Interface](/public/images/image.png)
+The main interface showcases the application's clean and intuitive design. It features a sidebar for folder navigation, a tab-based file system, and a powerful data table with sorting, filtering, and column management capabilities.
+
+### Dataset Analysis
+![Dataset Frequency Overview](/public/images/image-1.png)
+The Dataset Frequency Overview provides detailed insights into your data. It displays unique values for each column, their frequencies, and percentages, helping users quickly understand data distributions and patterns.
+
 ## Privacy & Security
 
 🔒 **Client-Side Only Processing**
